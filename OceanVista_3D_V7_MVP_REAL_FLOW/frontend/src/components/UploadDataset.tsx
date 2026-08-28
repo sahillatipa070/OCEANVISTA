@@ -1,7 +1,7 @@
 import { Upload, X, FileCheck2, LoaderCircle, Database, AlertTriangle } from 'lucide-react';
 import { useState } from 'react';
 import { useOceanStore } from '../store/oceanStore';
-const API='http://127.0.0.1:8000'; type Kind='model'|'argo'|'observation';
+const API='https://oceanvista-backend.onrender.com'; type Kind='model'|'argo'|'observation';
 export default function UploadDataset(){
  const [open,setOpen]=useState(false),[kind,setKind]=useState<Kind>('model'),[file,setFile]=useState<File|null>(null),[loading,setLoading]=useState(false),[error,setError]=useState(''),[result,setResult]=useState<any>(null); const s=useOceanStore();
  const upload=async()=>{if(!file)return;setLoading(true);setError('');try{const fd=new FormData();fd.append('file',file);const r=await fetch(`${API}/api/datasets/upload/${kind}`,{method:'POST',body:fd});const d=await r.json();if(!r.ok)throw new Error(d.detail||'Upload failed');setResult(d); if(d.validation.valid){const info={id:d.dataset_id,filename:d.filename,variables:d.metadata.variables||[],source:'Validated uploaded '+kind+' dataset',metadata:d.metadata}; if(kind==='model'){s.set('uploadedDataset',info);s.set('modelDataset',info);s.set('modelField',null)} if(kind==='argo'){s.set('argoDataset',info);s.set('instrument','Argo Float');s.set('selectedProfileIndex',0)} if(kind==='observation'){s.set('observationDataset',info);s.set('instrument','Argo Float');s.set('selectedProfileIndex',0)} if(kind==='model' && d.metadata?.times){s.set('dataTimes',d.metadata.times);s.set('timeIndex',0)} }}catch(e:any){setError(`${e.message}. Make sure FastAPI is running on port 8000.`)}finally{setLoading(false)}};

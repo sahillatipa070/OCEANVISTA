@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import React,{useEffect,useMemo,useRef,useState} from 'react';
 import { useOceanStore } from '../store/oceanStore';
 
-const API='http://127.0.0.1:8000', W=10,H=6,D=7;
+const API='https://oceanvista-backend.onrender.com', W=10,H=6,D=7;
 const clamp=(n:number,a:number,b:number)=>Math.max(a,Math.min(b,n));
 const depthY=(depth:number)=>H/2-clamp(depth,0,2000)/2000*H;
 function palette(t:number,scale:string){const sets:any={Turbo:['#30123b','#4145ab','#20b7d2','#30c979','#b8df2c','#ffe11a','#ff7a16','#d7191c'],Viridis:['#440154','#482878','#31688e','#26828e','#35b779','#b5de2b','#fde725'],Plasma:['#0d0887','#6a00a8','#b12a90','#e16462','#fca636','#f0f921'],Inferno:['#000004','#420a68','#932667','#dd513a','#fca50a','#fcffa4'],'Cool Warm':['#3b4cc0','#6aaed6','#b9d6e8','#f7f7f7','#f7b89c','#e26952','#b40426']};const a=sets[scale]||sets.Turbo,x=clamp(t,0,.99999)*(a.length-1),i=Math.floor(x);return new THREE.Color(a[i]).lerp(new THREE.Color(a[Math.min(i+1,a.length-1)]),x-i)}

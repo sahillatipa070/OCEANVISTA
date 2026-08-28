@@ -5,7 +5,7 @@ import {instruments,profiles} from '../data/mockOceanData';
 import {metrics} from '../utils/metrics';
 import {exportCSV} from '../utils/exportReport';
 import {useEffect,useState} from 'react';
-const API='http://127.0.0.1:8000'; const tabs:RightTab[]=['PROFILE','MODEL VS OBSERVATION','QUALITY'];
+const API='https://oceanvista-backend.onrender.com'; const tabs:RightTab[]=['PROFILE','MODEL VS OBSERVATION','QUALITY'];
 
 type Real={rows:any[];metrics:any;instrument:any;match:any;source:string}|null;
 export default function RightPanel(){
