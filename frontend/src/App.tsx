@@ -1,0 +1,2 @@
+import Header from './components/Header';import LeftPanel from './components/LeftPanel';import RightPanel from './components/RightPanel';import Timeline from './components/Timeline';import Toolbar from './components/Toolbar';import OceanScene from './three/OceanScene';
+export default function App(){return <main className="app"><Header/><div className="workspace"><LeftPanel/><OceanScene/><RightPanel/></div><div className="bottom"><Timeline/><Toolbar/></div></main>}
