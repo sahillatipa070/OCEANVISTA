@@ -1,33 +1,80 @@
-import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Line, Html, Edges } from '@react-three/drei';
+import React, {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
 import * as THREE from 'three';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+
+import {
+  Canvas,
+  useFrame,
+} from '@react-three/fiber';
+
+import {
+  OrbitControls,
+  Line,
+  Html,
+  Edges,
+} from '@react-three/drei';
+
 import { useOceanStore } from '../store/oceanStore';
 
-const API = 'https://oceanvista-backend.onrender.com';
+
+/* ============================================================
+   CONFIGURATION
+============================================================ */
+
+const API =
+  'https://oceanvista-backend.onrender.com';
 
 const W = 10;
 const H = 6;
 const D = 7;
 
-const clamp = (n: number, a: number, b: number) =>
-  Math.max(a, Math.min(b, n));
+const MAX_FIELD_POINTS = 140000;
+const MAX_SLICE_POINTS = 30000;
 
-const depthY = (depth: number) =>
-  H / 2 - (clamp(depth, 0, 2000) / 2000) * H;
 
-function palette(t: number, scale: string) {
-  const sets: any = {
+/* ============================================================
+   HELPERS
+============================================================ */
+
+const clamp = (
+  n: number,
+  min: number,
+  max: number
+) =>
+  Math.max(
+    min,
+    Math.min(max, n)
+  );
+
+
+/* ============================================================
+   SCIENTIFIC COLOR PALETTES
+============================================================ */
+
+function palette(
+  t: number,
+  scale: string
+) {
+  const palettes: Record<
+    string,
+    string[]
+  > = {
     Turbo: [
       '#30123b',
       '#4145ab',
       '#20b7d2',
-      '#30c979',
-      '#b8df2c',
+      '#22d779',
+      '#c6f51c',
       '#ffe11a',
       '#ff7a16',
-      '#d7191c'
+      '#e11013',
     ],
+
     Viridis: [
       '#440154',
       '#482878',
@@ -35,24 +82,27 @@ function palette(t: number, scale: string) {
       '#26828e',
       '#35b779',
       '#b5de2b',
-      '#fde725'
+      '#fde725',
     ],
+
     Plasma: [
       '#0d0887',
       '#6a00a8',
       '#b12a90',
       '#e16462',
       '#fca636',
-      '#f0f921'
+      '#f0f921',
     ],
+
     Inferno: [
       '#000004',
       '#420a68',
       '#932667',
       '#dd513a',
       '#fca50a',
-      '#fcffa4'
+      '#fcffa4',
     ],
+
     'Cool Warm': [
       '#3b4cc0',
       '#6aaed6',
@@ -60,417 +110,925 @@ function palette(t: number, scale: string) {
       '#f7f7f7',
       '#f7b89c',
       '#e26952',
-      '#b40426'
-    ]
+      '#b40426',
+    ],
   };
 
-  const a = sets[scale] || sets.Turbo;
+  const colors =
+    palettes[scale] ||
+    palettes.Turbo;
 
-  const x = clamp(t, 0, 0.99999) * (a.length - 1);
-  const i = Math.floor(x);
+  const value =
+    clamp(t, 0, 1);
 
-  return new THREE.Color(a[i]).lerp(
-    new THREE.Color(a[Math.min(i + 1, a.length - 1)]),
-    x - i
+  const scaled =
+    value *
+    (colors.length - 1);
+
+  const index =
+    Math.floor(scaled);
+
+  const fraction =
+    scaled - index;
+
+  const a =
+    new THREE.Color(
+      colors[index]
+    );
+
+  const b =
+    new THREE.Color(
+      colors[
+        Math.min(
+          index + 1,
+          colors.length - 1
+        )
+      ]
+    );
+
+  return a.lerp(
+    b,
+    fraction
   );
 }
 
+
+/* ============================================================
+   ERROR BOUNDARY
+============================================================ */
+
 class SceneErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { bad: boolean }
+  {
+    children: React.ReactNode;
+  },
+  {
+    hasError: boolean;
+  }
 > {
-  state = { bad: false };
+  state = {
+    hasError: false,
+  };
 
   static getDerivedStateFromError() {
-    return { bad: true };
+    return {
+      hasError: true,
+    };
+  }
+
+  componentDidCatch(
+    error: Error
+  ) {
+    console.error(
+      'OceanScene error:',
+      error
+    );
   }
 
   render() {
-    return this.state.bad ? (
-      <div className="scene-error">
-        3D renderer recovered safely. Choose another mode or dataset.
-      </div>
-    ) : (
-      this.props.children
-    );
-  }
-}
-
-/* =========================
-   WATER SURFACE
-========================= */
-
-function WaterSurface() {
-  const ref = useRef<THREE.Mesh>(null!);
-
-  const geo = useMemo(
-    () => new THREE.PlaneGeometry(W, D, 72, 52),
-    []
-  );
-
-  useFrame(({ clock }) => {
-    const p = geo.attributes.position as THREE.BufferAttribute;
-    const t = clock.elapsedTime;
-
-    for (let i = 0; i < p.count; i++) {
-      const x = p.getX(i);
-      const z = p.getY(i);
-
-      p.setZ(
-        i,
-        0.07 * Math.sin(x * 1.45 + t * 0.9) +
-          0.04 * Math.cos(z * 2.1 - t * 0.6) +
-          0.02 * Math.sin((x + z) * 3.1 + t * 0.4)
+    if (
+      this.state.hasError
+    ) {
+      return (
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            minHeight: '500px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: '#020812',
+            color: '#9edcff',
+            fontSize: '14px',
+          }}
+        >
+          3D renderer encountered an error.
+          Please change the visualization mode.
+        </div>
       );
     }
 
-    p.needsUpdate = true;
+    return this.props.children;
+  }
+}
 
-    if (Math.floor(t * 8) % 2 === 0) {
-      geo.computeVertexNormals();
+
+/* ============================================================
+   WATER SURFACE
+============================================================ */
+
+function WaterSurface() {
+  const geometry =
+    useMemo(() => {
+      return new THREE.PlaneGeometry(
+        W,
+        D,
+        64,
+        48
+      );
+    }, []);
+
+  const lastNormalUpdate =
+    useRef(0);
+
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
+
+
+  useFrame(({ clock }) => {
+    const positions =
+      geometry.attributes
+        .position as THREE.BufferAttribute;
+
+    const time =
+      clock.elapsedTime;
+
+
+    for (
+      let i = 0;
+      i < positions.count;
+      i++
+    ) {
+      const x =
+        positions.getX(i);
+
+      const z =
+        positions.getY(i);
+
+      const wave =
+        0.055 *
+          Math.sin(
+            x * 1.45 +
+            time * 0.9
+          ) +
+        0.035 *
+          Math.cos(
+            z * 2.1 -
+            time * 0.6
+          ) +
+        0.02 *
+          Math.sin(
+            (x + z) * 3.1 +
+            time * 0.4
+          );
+
+      positions.setZ(
+        i,
+        wave
+      );
+    }
+
+
+    positions.needsUpdate =
+      true;
+
+
+    if (
+      time -
+        lastNormalUpdate.current >
+      0.2
+    ) {
+      geometry.computeVertexNormals();
+
+      lastNormalUpdate.current =
+        time;
     }
   });
 
+
   return (
     <mesh
-      ref={ref}
-      geometry={geo}
-      rotation={[-Math.PI / 2, 0, 0]}
-      position={[0, H / 2 + 0.03, 0]}
+      geometry={geometry}
+      rotation={[
+        -Math.PI / 2,
+        0,
+        0,
+      ]}
+      position={[
+        0,
+        H / 2 + 0.04,
+        0,
+      ]}
     >
       <meshPhysicalMaterial
         color="#07567a"
         emissive="#04233a"
-        emissiveIntensity={0.65}
-        roughness={0.1}
-        metalness={0.78}
+        emissiveIntensity={0.45}
+        roughness={0.12}
+        metalness={0.72}
         transparent
-        opacity={0.93}
+        opacity={0.68}
+        side={THREE.DoubleSide}
       />
     </mesh>
   );
 }
 
-/* =========================
-   LOAD REAL DATA
-========================= */
 
-function RealField() {
-  const s = useOceanStore();
+/* ============================================================
+   REAL DATA LOADER
+============================================================ */
 
-  const [err, setErr] = useState('');
-  const [loading, setLoading] = useState(false);
+function RealFieldLoader() {
+  const modelDataset =
+    useOceanStore(
+      (state) =>
+        state.modelDataset
+    );
+
+  const variable =
+    useOceanStore(
+      (state) =>
+        state.variable
+    );
+
+  const timeIndex =
+    useOceanStore(
+      (state) =>
+        state.timeIndex
+    );
+
+  const setStore =
+    useOceanStore(
+      (state) =>
+        state.set
+    );
+
+
+  const [loading, setLoading] =
+    useState(false);
+
+  const [error, setError] =
+    useState('');
+
 
   useEffect(() => {
-    if (!s.modelDataset?.id) {
-      s.set('modelField', null);
+    if (
+      !modelDataset?.id
+    ) {
+      setStore(
+        'modelField',
+        null
+      );
+
       return;
     }
 
-    let dead = false;
-    const controller = new AbortController();
+
+    let cancelled =
+      false;
+
+    const controller =
+      new AbortController();
+
 
     async function loadField() {
       try {
         setLoading(true);
-        setErr('');
+
+        setError('');
+
 
         const url =
           `${API}/api/datasets/` +
-          `${encodeURIComponent(s.modelDataset!.id)}` +
-          `/field?variable=${encodeURIComponent(s.variable)}` +
-          `&time_index=${s.timeIndex}`;
+          `${encodeURIComponent(
+            modelDataset.id
+          )}` +
+          `/field?variable=${encodeURIComponent(
+            variable
+          )}` +
+          `&time_index=${timeIndex}`;
 
-        console.log('Loading real field:', url);
 
-        const response = await fetch(url, {
-          signal: controller.signal
-        });
+        console.log(
+          'Loading field:',
+          url
+        );
 
-        const data = await response.json();
 
-        if (!response.ok) {
-          throw new Error(data.detail || 'Field unavailable');
+        const response =
+          await fetch(
+            url,
+            {
+              signal:
+                controller.signal,
+            }
+          );
+
+
+        let data: any;
+
+        try {
+          data =
+            await response.json();
+        } catch {
+          throw new Error(
+            'Backend returned an invalid response.'
+          );
         }
 
-        if (dead) return;
 
-        if (Array.isArray(data.values) && data.values.length > 0) {
-          /*
-            IMPORTANT:
-            Set a completely new object so React/Three
-            definitely updates the geometry.
-          */
-          s.set('modelField', {
-            ...data,
-            values: [...data.values]
-          });
-
-          if (
-            Number.isFinite(data.min) &&
-            Number.isFinite(data.max) &&
-            data.max > data.min
-          ) {
-            s.set('colorMin', data.min);
-            s.set('colorMax', data.max);
-          }
-
-          /*
-            REAL TIMES FROM THE UPLOADED DATASET
-          */
-          if (
-            Array.isArray(data.times) &&
-            data.times.length > 0
-          ) {
-            s.set(
-              'dataTimes',
-              data.times.map((x: any) => String(x))
-            );
-
-            /*
-              Prevent invalid time index when
-              a new dataset has fewer times.
-            */
-            if (s.timeIndex >= data.times.length) {
-              s.set('timeIndex', 0);
-            }
-          } else {
-            s.set('dataTimes', []);
-          }
-
-          console.log(
-            'Loaded real field:',
-            data.variable,
-            'time:',
-            data.time_index,
-            'shape:',
-            data.shape
+        if (!response.ok) {
+          throw new Error(
+            data?.detail ||
+            `Field request failed (${response.status})`
           );
-        } else {
+        }
+
+
+        if (cancelled) {
+          return;
+        }
+
+
+        if (
+          !Array.isArray(
+            data.values
+          ) ||
+          data.values.length === 0
+        ) {
           throw new Error(
             'The uploaded dataset returned no renderable values.'
           );
         }
-      } catch (e: any) {
-        if (e.name !== 'AbortError') {
-          console.error('Field loading error:', e);
 
-          if (!dead) {
-            setErr(e.message || 'Unable to load field');
-            s.set('modelField', null);
+
+        setStore(
+          'modelField',
+          {
+            ...data,
+            values: [
+              ...data.values,
+            ],
           }
+        );
+
+
+        if (
+          Number.isFinite(
+            Number(data.min)
+          ) &&
+          Number.isFinite(
+            Number(data.max)
+          ) &&
+          Number(data.max) >
+            Number(data.min)
+        ) {
+          setStore(
+            'colorMin',
+            Number(data.min)
+          );
+
+          setStore(
+            'colorMax',
+            Number(data.max)
+          );
         }
+
+
+        if (
+          Array.isArray(
+            data.times
+          ) &&
+          data.times.length > 0
+        ) {
+          const times =
+            data.times.map(
+              (item: unknown) =>
+                String(item)
+            );
+
+          setStore(
+            'dataTimes',
+            times
+          );
+
+
+          if (
+            timeIndex >=
+            times.length
+          ) {
+            setStore(
+              'timeIndex',
+              0
+            );
+          }
+        } else {
+          setStore(
+            'dataTimes',
+            []
+          );
+        }
+
+
+        console.log(
+          'Real field loaded:',
+          data
+        );
+
+      } catch (err: any) {
+        if (
+          err?.name ===
+          'AbortError'
+        ) {
+          return;
+        }
+
+
+        console.error(
+          'Field loading error:',
+          err
+        );
+
+
+        if (!cancelled) {
+          setError(
+            err?.message ||
+            'Unable to load dataset field.'
+          );
+
+          setStore(
+            'modelField',
+            null
+          );
+        }
+
       } finally {
-        if (!dead) {
+        if (!cancelled) {
           setLoading(false);
         }
       }
     }
 
+
     loadField();
 
+
     return () => {
-      dead = true;
+      cancelled = true;
+
       controller.abort();
     };
+
   }, [
-    s.modelDataset?.id,
-    s.variable,
-    s.timeIndex
+    modelDataset?.id,
+    variable,
+    timeIndex,
+    setStore,
   ]);
+
 
   if (loading) {
     return (
       <Html position={[0, 0, 0]}>
         <div className="scene-toast">
-          Loading real data...
+          Loading scientific data...
         </div>
       </Html>
     );
   }
 
-  if (err) {
+
+  if (error) {
     return (
       <Html position={[0, 0, 0]}>
         <div className="scene-toast">
-          Dataset field: {err}
+          Dataset error: {error}
         </div>
       </Html>
     );
   }
+
 
   return null;
 }
 
-/* =========================
-   REAL 3D FIELD POINTS
-========================= */
+
+/* ============================================================
+   REAL FIELD POINTS
+============================================================ */
 
 function FieldPoints() {
-  const s = useOceanStore();
-  const f = s.modelField;
-
-  const geom = useMemo(() => {
-    if (!f?.shape || !Array.isArray(f.values)) {
-      return null;
-    }
-
-    /*
-      Backend returns:
-
-      a.shape[0] = nz = DEPTH
-      a.shape[1] = ny = LATITUDE
-      a.shape[2] = nx = LONGITUDE
-
-      Values are flattened in C order:
-      depth -> latitude -> longitude
-    */
-
-    const nz = Number(f.shape.nz);
-    const ny = Number(f.shape.ny);
-    const nx = Number(f.shape.nx);
-
-    if (!nx || !ny || !nz) {
-      return null;
-    }
-
-    if (nx * ny * nz !== f.values.length) {
-      console.error(
-        'Shape/value mismatch:',
-        { nx, ny, nz },
-        f.values.length
-      );
-
-      return null;
-    }
-
-    const positions = new Float32Array(
-      f.values.length * 3
+  const modelField =
+    useOceanStore(
+      (state) =>
+        state.modelField
     );
 
-    const colors = new Float32Array(
-      f.values.length * 3
+  const mode =
+    useOceanStore(
+      (state) =>
+        state.mode
     );
 
-    const lo = Number(s.colorMin);
-    const hi = Math.max(
-      lo + 1e-8,
-      Number(s.colorMax)
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
     );
 
-    let k = 0;
+  const opacity =
+    useOceanStore(
+      (state) =>
+        state.opacity
+    );
 
-    /*
-      Correct order:
+  const colorScale =
+    useOceanStore(
+      (state) =>
+        state.colorScale
+    );
 
-      z = depth
-      y = latitude
-      x = longitude
-    */
+  const colorMin =
+    useOceanStore(
+      (state) =>
+        state.colorMin
+    );
 
-    for (let z = 0; z < nz; z++) {
-      for (let y = 0; y < ny; y++) {
-        for (let x = 0; x < nx; x++, k++) {
+  const colorMax =
+    useOceanStore(
+      (state) =>
+        state.colorMax
+    );
 
-          /*
-            Longitude -> X
-          */
-          positions[3 * k] =
-            (x / Math.max(1, nx - 1) - 0.5) * W;
+  const log =
+    useOceanStore(
+      (state) =>
+        state.log
+    );
 
-          /*
-            Depth -> vertical Y
-          */
-          positions[3 * k + 1] =
-            H / 2 -
-            (z / Math.max(1, nz - 1)) * H;
 
-          /*
-            Latitude -> Z
-          */
-          positions[3 * k + 2] =
-            (y / Math.max(1, ny - 1) - 0.5) * D;
+  const geometry =
+    useMemo(() => {
+      const field =
+        modelField;
 
-          let value = Number(f.values[k]);
+      if (
+        !field?.shape ||
+        !Array.isArray(
+          field.values
+        )
+      ) {
+        return null;
+      }
 
-          if (!Number.isFinite(value)) {
-            value = lo;
+
+      const nx =
+        Number(
+          field.shape.nx
+        );
+
+      const ny =
+        Number(
+          field.shape.ny
+        );
+
+      const nz =
+        Number(
+          field.shape.nz
+        );
+
+
+      if (
+        !nx ||
+        !ny ||
+        !nz
+      ) {
+        return null;
+      }
+
+
+      const expected =
+        nx * ny * nz;
+
+
+      if (
+        field.values.length <
+        expected
+      ) {
+        console.error(
+          'Field shape/value mismatch:',
+          {
+            nx,
+            ny,
+            nz,
+            values:
+              field.values.length,
           }
+        );
 
-          let t = (value - lo) / (hi - lo);
+        return null;
+      }
 
-          t = clamp(t, 0, 1);
 
-          if (s.log) {
+      const samplingStep =
+        expected >
+        MAX_FIELD_POINTS
+          ? Math.ceil(
+              Math.pow(
+                expected /
+                  MAX_FIELD_POINTS,
+                1 / 3
+              )
+            )
+          : 1;
+
+
+      const positions: number[] =
+        [];
+
+      const colors: number[] =
+        [];
+
+
+      const dataMin =
+        Number.isFinite(
+          Number(field.min)
+        )
+          ? Number(field.min)
+          : colorMin;
+
+
+      const dataMax =
+        Number.isFinite(
+          Number(field.max)
+        )
+          ? Number(field.max)
+          : colorMax;
+
+
+      const lo =
+        Number.isFinite(
+          Number(colorMin)
+        )
+          ? Number(colorMin)
+          : Number(dataMin);
+
+
+      const hi =
+        Number.isFinite(
+          Number(colorMax)
+        ) &&
+        Number(colorMax) > lo
+          ? Number(colorMax)
+          : Math.max(
+              lo + 1e-8,
+              Number(dataMax)
+            );
+
+
+      const range =
+        Math.max(
+          1e-8,
+          hi - lo
+        );
+
+
+      const isoValue =
+        lo +
+        range * 0.58;
+
+
+      const isoTolerance =
+        Math.max(
+          range * 0.04,
+          1e-8
+        );
+
+
+      for (
+        let z = 0;
+        z < nz;
+        z += samplingStep
+      ) {
+        for (
+          let y = 0;
+          y < ny;
+          y += samplingStep
+        ) {
+          for (
+            let x = 0;
+            x < nx;
+            x += samplingStep
+          ) {
+            const index =
+              z * ny * nx +
+              y * nx +
+              x;
+
+
+            const value =
+              Number(
+                field.values[index]
+              );
+
+
+            if (
+              !Number.isFinite(
+                value
+              )
+            ) {
+              continue;
+            }
+
+
+            if (
+              mode ===
+                'Isosurface' &&
+              Math.abs(
+                value -
+                isoValue
+              ) >
+                isoTolerance
+            ) {
+              continue;
+            }
+
+
+            let t =
+              (
+                value -
+                lo
+              ) /
+              range;
+
+
             t =
-              Math.log1p(9 * t) /
-              Math.log(10);
+              clamp(
+                t,
+                0,
+                1
+              );
+
+
+            if (log) {
+              t =
+                Math.log1p(
+                  9 * t
+                ) /
+                Math.log(10);
+            }
+
+
+            const color =
+              palette(
+                t,
+                colorScale
+              );
+
+
+            const px =
+              (
+                x /
+                  Math.max(
+                    1,
+                    nx - 1
+                  ) -
+                0.5
+              ) *
+              W;
+
+
+            const py =
+              H / 2 -
+              (
+                z /
+                Math.max(
+                  1,
+                  nz - 1
+                )
+              ) *
+              H;
+
+
+            const pz =
+              (
+                y /
+                  Math.max(
+                    1,
+                    ny - 1
+                  ) -
+                0.5
+              ) *
+              D;
+
+
+            positions.push(
+              px,
+              py,
+              pz
+            );
+
+
+            colors.push(
+              color.r,
+              color.g,
+              color.b
+            );
           }
-
-          const c = palette(
-            t,
-            s.colorScale
-          );
-
-          colors[3 * k] = c.r;
-          colors[3 * k + 1] = c.g;
-          colors[3 * k + 2] = c.b;
         }
       }
-    }
 
-    const g = new THREE.BufferGeometry();
 
-    g.setAttribute(
-      'position',
-      new THREE.BufferAttribute(
-        positions,
-        3
-      )
-    );
+      if (
+        positions.length === 0
+      ) {
+        return null;
+      }
 
-    g.setAttribute(
-      'color',
-      new THREE.BufferAttribute(
-        colors,
-        3
-      )
-    );
 
-    return g;
+      const result =
+        new THREE.BufferGeometry();
 
-  }, [
-    f,
-    s.colorScale,
-    s.colorMin,
-    s.colorMax,
-    s.log
-  ]);
+
+      result.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          positions,
+          3
+        )
+      );
+
+
+      result.setAttribute(
+        'color',
+        new THREE.Float32BufferAttribute(
+          colors,
+          3
+        )
+      );
+
+
+      result.computeBoundingSphere();
+
+
+      return result;
+
+    }, [
+      modelField,
+      mode,
+      colorScale,
+      colorMin,
+      colorMax,
+      log,
+    ]);
+
 
   useEffect(() => {
     return () => {
-      geom?.dispose();
+      geometry?.dispose();
     };
-  }, [geom]);
+  }, [geometry]);
 
-  if (!geom) {
+
+  if (!geometry) {
     return null;
   }
 
+
   return (
     <points
-      key={`field-${f?.time_index}-${f?.dataset_id}`}
-      geometry={geom}
-      scale={[1, s.vertical, 1]}
+      key={
+        `field-${
+          modelField?.dataset_id ||
+          'data'
+        }-${
+          modelField?.time_index ||
+          0
+        }-${mode}`
+      }
+      geometry={geometry}
+      scale={[
+        1,
+        vertical,
+        1,
+      ]}
     >
       <pointsMaterial
-        size={0.11}
+        size={
+          mode ===
+          'Isosurface'
+            ? 0.14
+            : 0.1
+        }
         vertexColors
         transparent
-        opacity={Math.min(
-          0.95,
-          s.opacity * 0.9
-        )}
+        opacity={
+          mode ===
+          'Isosurface'
+            ? Math.min(
+                0.92,
+                opacity
+              )
+            : Math.min(
+                0.88,
+                opacity * 0.88
+              )
+        }
         sizeAttenuation
         depthWrite={false}
       />
@@ -478,68 +1036,114 @@ function FieldPoints() {
   );
 }
 
-/* =========================
-   FALLBACK VOLUME
-========================= */
+
+/* ============================================================
+   FALLBACK DEMO VOLUME
+============================================================ */
 
 function FallbackVolume() {
-  const s = useOceanStore();
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
+
+  const opacity =
+    useOceanStore(
+      (state) =>
+        state.opacity
+    );
+
+  const colorScale =
+    useOceanStore(
+      (state) =>
+        state.colorScale
+    );
+
+  const timeIndex =
+    useOceanStore(
+      (state) =>
+        state.timeIndex
+    );
+
 
   return (
-    <group scale={[1, s.vertical, 1]}>
+    <group
+      scale={[
+        1,
+        vertical,
+        1,
+      ]}
+    >
       {Array.from(
-        { length: 42 },
-        (_, i) => {
-          const q = i / 41;
+        {
+          length: 38,
+        },
+        (_, index) => {
+          const q =
+            index / 37;
 
-          /*
-            Make fallback also react
-            slightly to the selected time.
-          */
           const timeOffset =
-            ((s.timeIndex % 8) / 8) * 0.18;
+            (
+              timeIndex %
+              8
+            ) /
+            8 *
+            0.16;
 
-          const warm =
-            clamp(1 - q + timeOffset, 0, 1);
+          const t =
+            clamp(
+              1 -
+              q +
+              timeOffset,
+              0,
+              1
+            );
 
-          const c = palette(
-            warm,
-            s.colorScale
-          );
+          const color =
+            palette(
+              t,
+              colorScale
+            );
+
 
           return (
             <mesh
-              key={`${i}-${s.timeIndex}`}
+              key={
+                `fallback-${index}-${timeIndex}`
+              }
               position={[
                 0,
-                H / 2 - q * H,
-                0
+                H / 2 -
+                  q * H,
+                0,
               ]}
               rotation={[
                 -Math.PI / 2,
                 0,
-                0
+                0,
               ]}
             >
               <planeGeometry
                 args={[
-                  W - 0.1,
-                  D - 0.1,
-                  1,
-                  1
+                  W - 0.15,
+                  D - 0.15,
                 ]}
               />
 
               <meshBasicMaterial
-                color={c}
+                color={color}
                 transparent
                 opacity={
-                  (0.018 +
-                    0.075 *
+                  (
+                    0.015 +
+                    0.06 *
                       Math.sin(
-                        q * Math.PI
-                      )) *
-                  s.opacity
+                        q *
+                        Math.PI
+                      )
+                  ) *
+                  opacity
                 }
                 depthWrite={false}
                 side={
@@ -554,368 +1158,262 @@ function FallbackVolume() {
   );
 }
 
-/* =========================
+
+/* ============================================================
    OCEAN VOLUME
-========================= */
+============================================================ */
 
 function OceanVolume() {
-  const s = useOceanStore();
+  const layers =
+    useOceanStore(
+      (state) =>
+        state.layers
+    );
+
+  const modelField =
+    useOceanStore(
+      (state) =>
+        state.modelField
+    );
+
+  const mode =
+    useOceanStore(
+      (state) =>
+        state.mode
+    );
+
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
+
 
   return (
     <group>
+
+      {/* Scientific volume boundary */}
+
       <mesh
         scale={[
           1,
-          s.vertical,
-          1
+          vertical,
+          1,
         ]}
       >
         <boxGeometry
-          args={[W, H, D]}
+          args={[
+            W,
+            H,
+            D,
+          ]}
         />
 
         <meshPhysicalMaterial
-          color="#0b4264"
+          color="#075078"
           transparent
-          opacity={0.055}
+          opacity={0.025}
           depthWrite={false}
-          side={THREE.DoubleSide}
+          side={
+            THREE.DoubleSide
+          }
         />
 
         <Edges
-          color="#2c8ac0"
+          color="#2786b5"
           transparent
-          opacity={0.85}
+          opacity={0.75}
         />
       </mesh>
 
-      {s.layers[
+
+      {/* Numerical model */}
+
+      {layers[
         'Numerical Model'
       ] &&
-        (s.modelField ? (
-          <FieldPoints />
-        ) : (
-          <FallbackVolume />
-        ))}
+        mode !==
+          'Depth Slice' &&
+        (
+          modelField
+            ? <FieldPoints />
+            : <FallbackVolume />
+        )}
+
+
+      {/* Main ocean surface */}
 
       <WaterSurface />
+
     </group>
   );
 }
 
-/* =========================
+
+/* ============================================================
    ARGO FLOATS
-========================= */
+============================================================ */
 
 function Argo() {
-  const s = useOceanStore();
+  const layers =
+    useOceanStore(
+      (state) =>
+        state.layers
+    );
 
-  if (!s.layers['Argo Floats']) {
+  const instrumentId =
+    useOceanStore(
+      (state) =>
+        state.instrumentId
+    );
+
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
+
+  const setStore =
+    useOceanStore(
+      (state) =>
+        state.set
+    );
+
+
+  if (
+    !layers[
+      'Argo Floats'
+    ]
+  ) {
     return null;
   }
+
 
   const ids = [
     '2903671',
     '2904120',
     '2905214',
-    '2906382'
+    '2906382',
   ];
+
 
   return (
     <group>
-      {ids.map((id, i) => {
-        const p: [
-          number,
-          number,
-          number
-        ] = [
-          -3 + i * 2.05,
-          (H / 2 - 0.08) *
-            s.vertical,
-          i % 2 ? 1 : -1
-        ];
+      {ids.map(
+        (
+          id,
+          index
+        ) => {
+          const active =
+            instrumentId === id;
 
-        const active =
-          s.instrumentId === id;
-
-        return (
-          <group
-            key={id}
-            position={p}
-            onClick={(e) => {
-              e.stopPropagation();
-
-              s.set(
-                'instrument',
-                'Argo Float'
-              );
-
-              s.set(
-                'instrumentId',
-                id
-              );
-            }}
-          >
-            <mesh>
-              <sphereGeometry
-                args={[
-                  active
-                    ? 0.19
-                    : 0.12,
-                  20,
-                  20
-                ]}
-              />
-
-              <meshStandardMaterial
-                color={
-                  active
-                    ? '#d8f7ff'
-                    : '#198bdf'
-                }
-                emissive="#0876b4"
-                emissiveIntensity={
-                  active
-                    ? 2.4
-                    : 0.8
-                }
-              />
-            </mesh>
-
-            <mesh
-              position={[
-                0,
-                -1.55 *
-                  s.vertical,
-                0
-              ]}
-            >
-              <cylinderGeometry
-                args={[
-                  0.02,
-                  0.02,
-                  3.1 *
-                    s.vertical,
-                  6
-                ]}
-              />
-
-              <meshBasicMaterial
-                color="#70dcff"
-                transparent
-                opacity={0.8}
-              />
-            </mesh>
-
-            {active && (
-              <Html
-                position={[
-                  0.32,
-                  0.28,
-                  0.1
-                ]}
-                distanceFactor={8}
-              >
-                <div className="scene-label">
-                  <span>
-                    Argo Float
-                  </span>
-
-                  <b>{id}</b>
-                </div>
-              </Html>
-            )}
-          </group>
-        );
-      })}
-    </group>
-  );
-}
-
-/* =========================
-   GLIDER
-========================= */
-
-function Glider() {
-  const s = useOceanStore();
-
-  const r =
-    useRef<THREE.Group>(null!);
-
-  useFrame(({ clock }) => {
-    if (r.current) {
-      r.current.position.x =
-        0.18 *
-        Math.sin(
-          clock.elapsedTime * 0.55
-        );
-    }
-  });
-
-  if (!s.layers.Gliders) {
-    return null;
-  }
-
-  const pts = [
-    [-2.2, 2.3, 2.4],
-    [-1.5, 1.7, 1.8],
-    [-0.7, 1, 1],
-    [0.1, 0.25, 0.25],
-    [0.9, -0.45, -0.45],
-    [1.7, -1.1, -1.1],
-    [2.5, -1.7, -1.7]
-  ] as [
-    number,
-    number,
-    number
-  ][];
-
-  return (
-    <group
-      ref={r}
-      scale={[
-        1,
-        s.vertical,
-        1
-      ]}
-      onClick={(e) => {
-        e.stopPropagation();
-
-        s.set(
-          'instrument',
-          'Glider'
-        );
-
-        s.set(
-          'instrumentId',
-          'SG678'
-        );
-      }}
-    >
-      <Line
-        points={pts}
-        color="#ef5cf5"
-        lineWidth={2}
-      />
-
-      {pts.map((p, i) => (
-        <mesh
-          key={i}
-          position={p}
-        >
-          <sphereGeometry
-            args={[
-              0.055,
-              12,
-              12
-            ]}
-          />
-
-          <meshBasicMaterial
-            color="#ff87f4"
-          />
-        </mesh>
-      ))}
-
-      <Html
-        position={pts[1]}
-        distanceFactor={8}
-      >
-        <div className="scene-label mag">
-          <span>Glider</span>
-          <b>SG678</b>
-        </div>
-      </Html>
-    </group>
-  );
-}
-
-/* =========================
-   CURRENTS
-========================= */
-
-function Currents() {
-  const s = useOceanStore();
-
-  const g =
-    useRef<THREE.Group>(null!);
-
-  useFrame(({ clock }) => {
-    if (g.current) {
-      g.current.position.x =
-        0.12 *
-        Math.sin(
-          clock.elapsedTime * 0.4
-        );
-    }
-  });
-
-  if (!s.layers.Currents) {
-    return null;
-  }
-
-  return (
-    <group ref={g}>
-      {Array.from(
-        { length: 28 },
-        (_, i) => {
           const x =
-            -4.5 +
-            (i % 7) * 1.5;
+            -3.2 +
+            index * 2.1;
 
           const z =
-            -2.7 +
-            Math.floor(i / 7) *
-              1.75;
+            index % 2 === 0
+              ? -1.1
+              : 1.05;
 
-          const a =
-            i * 0.73;
-
-          const e: [
-            number,
-            number,
-            number
-          ] = [
-            x +
-              0.52 *
-                Math.cos(a),
-            2.7,
-            z +
-              0.52 *
-                Math.sin(a)
-          ];
 
           return (
-            <group key={i}>
-              <Line
-                points={[
-                  [x, 2.7, z],
-                  e
-                ]}
-                color="#75dcff"
-              />
+            <group
+              key={id}
+              position={[
+                x,
+                (
+                  H / 2 -
+                  0.1
+                ) *
+                  vertical,
+                z,
+              ]}
+              onClick={(
+                event
+              ) => {
+                event.stopPropagation();
 
-              <mesh
-                position={e}
-                rotation={[
-                  0,
-                  a -
-                    Math.PI / 2,
-                  0
-                ]}
-              >
-                <coneGeometry
+                setStore(
+                  'instrument',
+                  'Argo Float'
+                );
+
+                setStore(
+                  'instrumentId',
+                  id
+                );
+              }}
+            >
+              <mesh>
+                <sphereGeometry
                   args={[
-                    0.07,
-                    0.18,
-                    7
+                    active
+                      ? 0.18
+                      : 0.12,
+                    18,
+                    18,
                   ]}
                 />
 
-                <meshBasicMaterial
-                  color="#b5efff"
+                <meshStandardMaterial
+                  color={
+                    active
+                      ? '#d8f7ff'
+                      : '#198bdf'
+                  }
+                  emissive="#0876b4"
+                  emissiveIntensity={
+                    active
+                      ? 1.6
+                      : 0.55
+                  }
                 />
               </mesh>
+
+
+              <Line
+                points={[
+                  [
+                    0,
+                    0,
+                    0,
+                  ],
+                  [
+                    0,
+                    -3.2 *
+                      vertical,
+                    0,
+                  ],
+                ]}
+                color="#70dcff"
+                transparent
+                opacity={0.75}
+                lineWidth={1}
+              />
+
+
+              {active && (
+                <Html
+                  position={[
+                    0.28,
+                    0.28,
+                    0.1,
+                  ]}
+                  distanceFactor={8}
+                >
+                  <div className="scene-label">
+                    <span>
+                      Argo Float
+                    </span>
+
+                    <b>
+                      {id}
+                    </b>
+                  </div>
+                </Html>
+              )}
+
             </group>
           );
         }
@@ -924,485 +1422,1396 @@ function Currents() {
   );
 }
 
-/* =========================
-   DEPTH SLICE
-========================= */
 
-function DepthSlice() {
-  const s = useOceanStore();
+/* ============================================================
+   GLIDER
+============================================================ */
+
+function Glider() {
+  const layers =
+    useOceanStore(
+      (state) =>
+        state.layers
+    );
+
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
+
+  const setStore =
+    useOceanStore(
+      (state) =>
+        state.set
+    );
+
+  const groupRef =
+    useRef<THREE.Group>(
+      null
+    );
+
+
+  useFrame(
+    ({ clock }) => {
+      if (
+        groupRef.current
+      ) {
+        groupRef.current.position.x =
+          0.18 *
+          Math.sin(
+            clock.elapsedTime *
+            0.55
+          );
+      }
+    }
+  );
+
 
   if (
-    s.mode !== 'Depth Slice'
+    !layers.Gliders
   ) {
     return null;
   }
 
-  const y =
-    depthY(s.depth) *
-    s.vertical;
 
-  const t =
-    s.modelField?.depth?.length
-      ? clamp(
-          s.depth /
-            Math.max(
-              1,
-              Number(
-                s.modelField.depth.at(
-                  -1
-                ) || 2000
-              )
-            ),
-          0,
-          1
-        )
-      : s.depth / 2000;
+  const points: [
+    number,
+    number,
+    number
+  ][] = [
+    [-2.2, 2.3, 2.4],
+    [-1.5, 1.7, 1.8],
+    [-0.7, 1.0, 1.0],
+    [0.1, 0.25, 0.25],
+    [0.9, -0.45, -0.45],
+    [1.7, -1.1, -1.1],
+    [2.5, -1.7, -1.7],
+  ];
+
 
   return (
     <group
-      position={[0, y, 0]}
-    >
-      <mesh
-        rotation={[
-          -Math.PI / 2,
-          0,
-          0
-        ]}
-      >
-        <planeGeometry
-          args={[
-            W - 0.12,
-            D - 0.12,
-            42,
-            30
-          ]}
-        />
+      ref={groupRef}
+      scale={[
+        1,
+        vertical,
+        1,
+      ]}
+      onClick={(
+        event
+      ) => {
+        event.stopPropagation();
 
-        <meshBasicMaterial
-          color={palette(
-            1 - t,
-            s.colorScale
-          )}
+        setStore(
+          'instrument',
+          'Glider'
+        );
+
+        setStore(
+          'instrumentId',
+          'SG678'
+        );
+      }}
+    >
+      <Line
+        points={points}
+        color="#ef5cf5"
+        lineWidth={2}
+      />
+
+
+      {points.map(
+        (
+          point,
+          index
+        ) => (
+          <mesh
+            key={index}
+            position={point}
+          >
+            <sphereGeometry
+              args={[
+                0.055,
+                12,
+                12,
+              ]}
+            />
+
+            <meshBasicMaterial
+              color="#ff87f4"
+            />
+          </mesh>
+        )
+      )}
+
+
+      <Html
+        position={points[1]}
+        distanceFactor={8}
+      >
+        <div className="scene-label mag">
+          <span>
+            Glider
+          </span>
+
+          <b>
+            SG678
+          </b>
+        </div>
+      </Html>
+
+    </group>
+  );
+}
+
+
+/* ============================================================
+   CURRENTS
+============================================================ */
+
+function Currents() {
+  const enabled =
+    useOceanStore(
+      (state) =>
+        state.layers.Currents
+    );
+
+  const groupRef =
+    useRef<THREE.Group>(
+      null
+    );
+
+
+  useFrame(
+    ({ clock }) => {
+      if (
+        groupRef.current
+      ) {
+        groupRef.current.position.x =
+          0.12 *
+          Math.sin(
+            clock.elapsedTime *
+            0.4
+          );
+      }
+    }
+  );
+
+
+  if (!enabled) {
+    return null;
+  }
+
+
+  return (
+    <group ref={groupRef}>
+
+      {Array.from(
+        {
+          length: 28,
+        },
+        (_, index) => {
+
+          const x =
+            -4.5 +
+            (index % 7) *
+            1.5;
+
+          const z =
+            -2.7 +
+            Math.floor(
+              index / 7
+            ) *
+            1.75;
+
+          const angle =
+            index * 0.73;
+
+          const end: [
+            number,
+            number,
+            number
+          ] = [
+            x +
+              0.52 *
+              Math.cos(angle),
+
+            2.7,
+
+            z +
+              0.52 *
+              Math.sin(angle),
+          ];
+
+
+          return (
+            <group key={index}>
+
+              <Line
+                points={[
+                  [
+                    x,
+                    2.7,
+                    z,
+                  ],
+                  end,
+                ]}
+                color="#75dcff"
+                transparent
+                opacity={0.8}
+              />
+
+
+              <mesh
+                position={end}
+                rotation={[
+                  0,
+                  angle -
+                  Math.PI / 2,
+                  0,
+                ]}
+              >
+                <coneGeometry
+                  args={[
+                    0.07,
+                    0.18,
+                    7,
+                  ]}
+                />
+
+                <meshBasicMaterial
+                  color="#b5efff"
+                />
+              </mesh>
+
+            </group>
+          );
+        }
+      )}
+
+    </group>
+  );
+}
+
+
+/* ============================================================
+   DEPTH SLICE
+============================================================ */
+
+function DepthSlice() {
+  const s =
+    useOceanStore();
+
+
+  const geometry =
+    useMemo(() => {
+      const field =
+        s.modelField;
+
+
+      if (
+        s.mode !==
+        'Depth Slice'
+      ) {
+        return null;
+      }
+
+
+      if (
+        !field?.shape ||
+        !Array.isArray(
+          field.values
+        )
+      ) {
+        return null;
+      }
+
+
+      const nx =
+        Number(
+          field.shape.nx
+        );
+
+      const ny =
+        Number(
+          field.shape.ny
+        );
+
+      const nz =
+        Number(
+          field.shape.nz
+        );
+
+
+      if (
+        !nx ||
+        !ny ||
+        !nz
+      ) {
+        return null;
+      }
+
+
+      let zIndex = 0;
+
+
+      if (
+        Array.isArray(
+          field.depth
+        ) &&
+        field.depth.length > 0
+      ) {
+        let closest =
+          Infinity;
+
+        field.depth.forEach(
+          (
+            depth: number,
+            index: number
+          ) => {
+            const distance =
+              Math.abs(
+                Number(depth) -
+                s.depth
+              );
+
+            if (
+              distance <
+              closest
+            ) {
+              closest =
+                distance;
+
+              zIndex =
+                index;
+            }
+          }
+        );
+
+      } else {
+        zIndex =
+          Math.round(
+            clamp(
+              s.depth /
+              2000,
+              0,
+              1
+            ) *
+            (nz - 1)
+          );
+      }
+
+
+      zIndex =
+        clamp(
+          zIndex,
+          0,
+          nz - 1
+        );
+
+
+      const positions: number[] =
+        [];
+
+      const colors: number[] =
+        [];
+
+
+      const lo =
+        Number(
+          s.colorMin
+        );
+
+      const hi =
+        Math.max(
+          lo + 1e-8,
+          Number(
+            s.colorMax
+          )
+        );
+
+
+      const total =
+        nx * ny;
+
+
+      const step =
+        total >
+        MAX_SLICE_POINTS
+          ? Math.ceil(
+              Math.sqrt(
+                total /
+                MAX_SLICE_POINTS
+              )
+            )
+          : 1;
+
+
+      const yPosition =
+        H / 2 -
+        (
+          zIndex /
+          Math.max(
+            1,
+            nz - 1
+          )
+        ) *
+        H;
+
+
+      for (
+        let y = 0;
+        y < ny;
+        y += step
+      ) {
+        for (
+          let x = 0;
+          x < nx;
+          x += step
+        ) {
+          const index =
+            zIndex *
+              ny *
+              nx +
+            y *
+              nx +
+            x;
+
+
+          const value =
+            Number(
+              field.values[
+                index
+              ]
+            );
+
+
+          if (
+            !Number.isFinite(
+              value
+            )
+          ) {
+            continue;
+          }
+
+
+          let t =
+            (
+              value -
+              lo
+            ) /
+            (
+              hi -
+              lo
+            );
+
+
+          t =
+            clamp(
+              t,
+              0,
+              1
+            );
+
+
+          if (s.log) {
+            t =
+              Math.log1p(
+                9 * t
+              ) /
+              Math.log(10);
+          }
+
+
+          const color =
+            palette(
+              t,
+              s.colorScale
+            );
+
+
+          const px =
+            (
+              x /
+                Math.max(
+                  1,
+                  nx - 1
+                ) -
+              0.5
+            ) *
+            W;
+
+
+          const pz =
+            (
+              y /
+                Math.max(
+                  1,
+                  ny - 1
+                ) -
+              0.5
+            ) *
+            D;
+
+
+          positions.push(
+            px,
+            yPosition,
+            pz
+          );
+
+
+          colors.push(
+            color.r,
+            color.g,
+            color.b
+          );
+        }
+      }
+
+
+      if (
+        positions.length === 0
+      ) {
+        return null;
+      }
+
+
+      const result =
+        new THREE.BufferGeometry();
+
+
+      result.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          positions,
+          3
+        )
+      );
+
+
+      result.setAttribute(
+        'color',
+        new THREE.Float32BufferAttribute(
+          colors,
+          3
+        )
+      );
+
+
+      result.computeBoundingSphere();
+
+
+      return result;
+
+    }, [
+      s.modelField,
+      s.mode,
+      s.depth,
+      s.colorMin,
+      s.colorMax,
+      s.colorScale,
+      s.log,
+    ]);
+
+
+  useEffect(() => {
+    return () => {
+      geometry?.dispose();
+    };
+  }, [geometry]);
+
+
+  if (
+    !geometry ||
+    s.mode !==
+      'Depth Slice'
+  ) {
+    return null;
+  }
+
+
+  const y =
+    geometry.attributes
+      .position
+      .getY(0);
+
+
+  return (
+    <group
+      scale={[
+        1,
+        s.vertical,
+        1,
+      ]}
+    >
+      <points
+        geometry={geometry}
+      >
+        <pointsMaterial
+          vertexColors
+          size={0.13}
+          sizeAttenuation
           transparent
-          opacity={0.72}
-          side={THREE.DoubleSide}
+          opacity={
+            Math.min(
+              0.95,
+              s.opacity
+            )
+          }
+          depthWrite={false}
         />
-      </mesh>
+      </points>
+
 
       <Line
         points={[
-          [-W / 2, 0, -D / 2],
-          [W / 2, 0, -D / 2],
-          [W / 2, 0, D / 2],
-          [-W / 2, 0, D / 2],
-          [-W / 2, 0, -D / 2]
+          [
+            -W / 2,
+            y,
+            -D / 2,
+          ],
+
+          [
+            W / 2,
+            y,
+            -D / 2,
+          ],
+
+          [
+            W / 2,
+            y,
+            D / 2,
+          ],
+
+          [
+            -W / 2,
+            y,
+            D / 2,
+          ],
+
+          [
+            -W / 2,
+            y,
+            -D / 2,
+          ],
         ]}
         color="#79eaff"
+        transparent
+        opacity={0.8}
       />
+
 
       <Html
         position={[
-          3.1,
-          0.18,
-          1.7
+          3.3,
+          y + 0.2,
+          1.8,
         ]}
         distanceFactor={8}
       >
         <div className="scene-label">
           <span>
-            Depth Slice
+            DEPTH SLICE
           </span>
 
           <b>
-            {s.depth === 0
-              ? 'Surface'
-              : `${s.depth} m`}
+            {s.depth} m
           </b>
         </div>
       </Html>
+
     </group>
   );
 }
 
-/* =========================
-   ISOSURFACE
-========================= */
 
-function Isosurface() {
-  const s = useOceanStore();
-
-  const geo = useMemo(() => {
-    const nx = 52;
-    const ny = 36;
-
-    const verts: number[] =
-      [];
-
-    for (
-      let j = 0;
-      j <= ny;
-      j++
-    ) {
-      for (
-        let i = 0;
-        i <= nx;
-        i++
-      ) {
-        const u =
-          i / nx - 0.5;
-
-        const v =
-          j / ny - 0.5;
-
-        const r =
-          1 +
-          0.18 *
-            Math.sin(i * 0.31) *
-            Math.cos(j * 0.23) +
-          0.08 *
-            Math.sin(
-              (i + j) * 0.19
-            );
-
-        verts.push(
-          u * 4.2 * r,
-          v * 1.8 * r,
-          0.28 *
-            Math.sin(i * 0.22) +
-            0.18 *
-              Math.cos(
-                j * 0.35
-              ) +
-            0.18 *
-              Math.sin(
-                (i - j) * 0.14
-              )
-        );
-      }
-    }
-
-    const idx: number[] = [];
-
-    for (
-      let j = 0;
-      j < ny;
-      j++
-    ) {
-      for (
-        let i = 0;
-        i < nx;
-        i++
-      ) {
-        const a =
-          j * (nx + 1) + i;
-
-        const b = a + 1;
-
-        const c =
-          a + (nx + 1);
-
-        const d = c + 1;
-
-        idx.push(
-          a,
-          c,
-          b,
-          b,
-          c,
-          d
-        );
-      }
-    }
-
-    const g =
-      new THREE.BufferGeometry();
-
-    g.setAttribute(
-      'position',
-      new THREE.Float32BufferAttribute(
-        verts,
-        3
-      )
-    );
-
-    g.setIndex(idx);
-
-    g.computeVertexNormals();
-
-    return g;
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      geo.dispose();
-    };
-  }, [geo]);
-
-  if (
-    s.mode !== 'Isosurface'
-  ) {
-    return null;
-  }
-
-  return (
-    <group
-      scale={[
-        1,
-        s.vertical,
-        1
-      ]}
-    >
-      <mesh
-        geometry={geo}
-        position={[
-          0,
-          -1.65,
-          0
-        ]}
-        rotation={[
-          -0.2,
-          0.45,
-          0.08
-        ]}
-      >
-        <meshStandardMaterial
-          color="#27d590"
-          emissive="#087850"
-          emissiveIntensity={1.1}
-          transparent
-          opacity={0.78}
-          roughness={0.35}
-          metalness={0.12}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-      <Html
-        position={[
-          0,
-          -0.6,
-          0
-        ]}
-        distanceFactor={8}
-      >
-        <div className="scene-label iso">
-          <span>
-            Isosurface
-          </span>
-
-          <b>
-            {s.variable.includes(
-              'Temperature'
-            )
-              ? '20°C'
-              : s.variable}
-          </b>
-        </div>
-      </Html>
-    </group>
-  );
-}
-
-/* =========================
+/* ============================================================
    BATHYMETRY
-========================= */
+============================================================ */
 
 function Bathymetry() {
-  const s = useOceanStore();
+  const enabled =
+    useOceanStore(
+      (state) =>
+        state.layers.Bathymetry
+    );
 
-  const geo = useMemo(() => {
-    const g =
-      new THREE.PlaneGeometry(
-        W - 0.12,
-        D - 0.12,
-        64,
-        46
-      );
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
 
-    const p =
-      g.attributes
-        .position as THREE.BufferAttribute;
 
-    for (
-      let i = 0;
-      i < p.count;
-      i++
-    ) {
-      const x = p.getX(i);
-      const z = p.getY(i);
+  const geometry =
+    useMemo(() => {
+      const geo =
+        new THREE.PlaneGeometry(
+          W - 0.12,
+          D - 0.12,
+          64,
+          46
+        );
 
-      const h =
-        0.42 *
-          Math.exp(
-            -(
-              (x + 1.2) ** 2 +
-              (z - 0.1) ** 2
-            ) / 3
-          ) +
-        0.22 *
-          Math.sin(x * 1.3) *
-          Math.cos(z * 1.8) +
-        0.08 *
-          Math.sin(z * 4);
 
-      p.setZ(i, h);
-    }
+      const position =
+        geo.attributes
+          .position as THREE.BufferAttribute;
 
-    p.needsUpdate = true;
 
-    g.computeVertexNormals();
+      for (
+        let i = 0;
+        i < position.count;
+        i++
+      ) {
+        const x =
+          position.getX(i);
 
-    return g;
-  }, []);
+        const z =
+          position.getY(i);
+
+
+        const elevation =
+          0.42 *
+            Math.exp(
+              -(
+                (
+                  (x + 1.2) ** 2
+                ) +
+                (
+                  (z - 0.1) ** 2
+                )
+              ) /
+              3
+            ) +
+          0.22 *
+            Math.sin(
+              x * 1.3
+            ) *
+            Math.cos(
+              z * 1.8
+            ) +
+          0.08 *
+            Math.sin(
+              z * 4
+            );
+
+
+        position.setZ(
+          i,
+          elevation
+        );
+      }
+
+
+      position.needsUpdate =
+        true;
+
+      geo.computeVertexNormals();
+
+
+      return geo;
+
+    }, []);
+
 
   useEffect(() => {
     return () => {
-      geo.dispose();
+      geometry.dispose();
     };
-  }, [geo]);
+  }, [geometry]);
 
-  if (!s.layers.Bathymetry) {
+
+  if (!enabled) {
     return null;
   }
+
 
   return (
     <mesh
-      geometry={geo}
+      geometry={geometry}
       position={[
         0,
-        -H / 2 *
-          s.vertical +
+        -(
+          H / 2
+        ) *
+          vertical +
           0.08,
-        0
+        0,
       ]}
       rotation={[
         -Math.PI / 2,
         0,
-        0
-      ]}
-      scale={[
-        1,
-        s.vertical,
-        1
+        0,
       ]}
     >
       <meshStandardMaterial
         color="#0b5f63"
         emissive="#04383a"
-        emissiveIntensity={0.75}
+        emissiveIntensity={0.45}
         roughness={0.82}
         transparent
-        opacity={0.96}
-        side={THREE.DoubleSide}
+        opacity={0.95}
+        side={
+          THREE.DoubleSide
+        }
       />
     </mesh>
   );
 }
 
-/* =========================
-   MEASUREMENT
-========================= */
 
-function MeasureLayer() {
-  const s = useOceanStore();
+/* ============================================================
+   CHLOROPHYLL LAYER
+============================================================ */
 
-  const p =
-    s.measurePoints;
+function ChlorophyllLayer() {
+  const enabled =
+    useOceanStore(
+      (state) =>
+        state.layers.Chlorophyll
+    );
 
-  if (p.length < 2) {
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
+
+
+  const ref =
+    useRef<THREE.Group>(
+      null
+    );
+
+
+  /*
+    IMPORTANT:
+    All hooks are above the
+    conditional return.
+  */
+
+  const geometry =
+    useMemo(() => {
+      const positions: number[] =
+        [];
+
+      const colors: number[] =
+        [];
+
+      const color =
+        new THREE.Color(
+          '#39ff88'
+        );
+
+
+      /*
+        Deterministic distribution.
+        No random regeneration.
+      */
+
+      for (
+        let i = 0;
+        i < 2200;
+        i++
+      ) {
+        const a =
+          i * 0.61803398875;
+
+        const b =
+          i * 0.38196601125;
+
+        const x =
+          -W / 2 +
+          (a % 1) * W;
+
+        const z =
+          -D / 2 +
+          (b % 1) * D;
+
+
+        /*
+          Concentrated near surface
+        */
+
+        const y =
+          H / 2 -
+          (
+            (
+              (i * 0.137) %
+              1
+            ) *
+            1.45
+          );
+
+
+        positions.push(
+          x,
+          y,
+          z
+        );
+
+
+        colors.push(
+          color.r,
+          color.g,
+          color.b
+        );
+      }
+
+
+      const geo =
+        new THREE.BufferGeometry();
+
+
+      geo.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          positions,
+          3
+        )
+      );
+
+
+      geo.setAttribute(
+        'color',
+        new THREE.Float32BufferAttribute(
+          colors,
+          3
+        )
+      );
+
+
+      return geo;
+
+    }, []);
+
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
+
+
+  useFrame(({ clock }) => {
+    if (
+      ref.current
+    ) {
+      ref.current.rotation.y =
+        Math.sin(
+          clock.elapsedTime *
+          0.18
+        ) *
+        0.04;
+    }
+  });
+
+
+  if (!enabled) {
     return null;
   }
+
+
+  return (
+    <group
+      ref={ref}
+      scale={[
+        1,
+        vertical,
+        1,
+      ]}
+    >
+
+      <points geometry={geometry}>
+        <pointsMaterial
+          vertexColors
+          size={0.075}
+          sizeAttenuation
+          transparent
+          opacity={0.9}
+          depthWrite={false}
+        />
+      </points>
+
+
+      {/* Visible chlorophyll glow */}
+
+      <mesh
+        position={[
+          0,
+          H / 2 - 0.72,
+          0,
+        ]}
+        rotation={[
+          -Math.PI / 2,
+          0,
+          0,
+        ]}
+      >
+        <planeGeometry
+          args={[
+            W * 0.96,
+            D * 0.96,
+          ]}
+        />
+
+        <meshBasicMaterial
+          color="#16d66f"
+          transparent
+          opacity={0.08}
+          depthWrite={false}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+
+      <Html
+        position={[
+          -4.3,
+          H / 2 + 0.25,
+          0,
+        ]}
+        distanceFactor={8}
+      >
+        <div className="scene-label">
+          <span>
+            Chlorophyll
+          </span>
+
+          <b>
+            Surface Concentration
+          </b>
+        </div>
+      </Html>
+
+    </group>
+  );
+}
+
+
+/* ============================================================
+   SEA SURFACE HEIGHT
+============================================================ */
+
+function SeaSurfaceHeightLayer() {
+  const enabled =
+    useOceanStore(
+      (state) =>
+        state.layers[
+          'Sea Surface Height'
+        ]
+    );
+
+
+  const meshRef =
+    useRef<THREE.Mesh>(
+      null
+    );
+
+
+  const geometry =
+    useMemo(() => {
+      return new THREE.PlaneGeometry(
+        W,
+        D,
+        72,
+        56
+      );
+    }, []);
+
+
+  useEffect(() => {
+    return () => {
+      geometry.dispose();
+    };
+  }, [geometry]);
+
+
+  useFrame(({ clock }) => {
+    if (!enabled) {
+      return;
+    }
+
+
+    const position =
+      geometry.attributes
+        .position as THREE.BufferAttribute;
+
+    const time =
+      clock.elapsedTime;
+
+
+    for (
+      let i = 0;
+      i < position.count;
+      i++
+    ) {
+      const x =
+        position.getX(i);
+
+      const z =
+        position.getY(i);
+
+
+      /*
+        Stronger visible SSH anomaly
+      */
+
+      const wave =
+        Math.sin(
+          x * 1.15 +
+          time * 0.8
+        ) *
+        0.24 +
+
+        Math.cos(
+          z * 1.45 -
+          time * 0.6
+        ) *
+        0.16 +
+
+        Math.sin(
+          (x + z) * 0.7 +
+          time * 0.4
+        ) *
+        0.08;
+
+
+      position.setZ(
+        i,
+        wave
+      );
+    }
+
+
+    position.needsUpdate =
+      true;
+
+
+    geometry.computeVertexNormals();
+  });
+
+
+  if (!enabled) {
+    return null;
+  }
+
+
+  return (
+    <group>
+
+      <mesh
+        ref={meshRef}
+        geometry={geometry}
+        position={[
+          0,
+          H / 2 + 0.16,
+          0,
+        ]}
+        rotation={[
+          -Math.PI / 2,
+          0,
+          0,
+        ]}
+      >
+        <meshStandardMaterial
+          color="#3978ff"
+          emissive="#174ac0"
+          emissiveIntensity={1.35}
+          transparent
+          opacity={0.58}
+          roughness={0.2}
+          metalness={0.5}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+
+
+      {/* SSH label */}
+
+      <Html
+        position={[
+          3.5,
+          H / 2 + 0.5,
+          -2.2,
+        ]}
+        distanceFactor={8}
+      >
+        <div className="scene-label">
+          <span>
+            Sea Surface Height
+          </span>
+
+          <b>
+            Dynamic SSH
+          </b>
+        </div>
+      </Html>
+
+    </group>
+  );
+}
+
+
+/* ============================================================
+   MEASUREMENT LAYER
+============================================================ */
+
+function MeasureLayer() {
+  const points =
+    useOceanStore(
+      (state) =>
+        state.measurePoints
+    );
+
+
+  if (
+    points.length < 2
+  ) {
+    return null;
+  }
+
 
   return (
     <>
       <Line
         points={[
-          p[0],
-          p[1]
+          points[0],
+          points[1],
         ]}
         color="#facc15"
         lineWidth={2}
       />
 
-      {p.map((x, i) => (
-        <mesh
-          key={i}
-          position={x}
-        >
-          <sphereGeometry
-            args={[
-              0.1,
-              12,
-              12
-            ]}
-          />
 
-          <meshBasicMaterial
-            color="#facc15"
-          />
-        </mesh>
-      ))}
+      {points.map(
+        (
+          point,
+          index
+        ) => (
+          <mesh
+            key={index}
+            position={point}
+          >
+            <sphereGeometry
+              args={[
+                0.1,
+                12,
+                12,
+              ]}
+            />
+
+            <meshBasicMaterial
+              color="#facc15"
+            />
+          </mesh>
+        )
+      )}
     </>
   );
 }
 
+
+/* ============================================================
+   MEASUREMENT CLICK PLANE
+============================================================ */
+
 function ClickPlane() {
-  const s = useOceanStore();
+  const measureMode =
+    useOceanStore(
+      (state) =>
+        state.measureMode
+    );
+
+  const measurePoints =
+    useOceanStore(
+      (state) =>
+        state.measurePoints
+    );
+
+  const setStore =
+    useOceanStore(
+      (state) =>
+        state.set
+    );
+
+
+  if (!measureMode) {
+    return null;
+  }
+
 
   return (
     <mesh
-      visible={
-        s.measureMode
-      }
       rotation={[
         -Math.PI / 2,
         0,
-        0
+        0,
       ]}
-      position={[0, 0, 0]}
-      onClick={(e) => {
-        if (!s.measureMode) {
-          return;
-        }
+      position={[
+        0,
+        0,
+        0,
+      ]}
+      onClick={(
+        event
+      ) => {
+        event.stopPropagation();
 
-        e.stopPropagation();
 
-        const p: [
+        const point: [
           number,
           number,
           number
         ] = [
-          e.point.x,
-          e.point.y,
-          e.point.z
+          event.point.x,
+          event.point.y,
+          event.point.z,
         ];
 
-        s.set(
-          'measurePoints',
-          s.measurePoints.length >= 2
-            ? [p]
-            : [
-                ...s.measurePoints,
-                p
-              ] as any
-        );
+
+        if (
+          measurePoints.length >=
+          2
+        ) {
+          setStore(
+            'measurePoints',
+            [point]
+          );
+        } else {
+          setStore(
+            'measurePoints',
+            [
+              ...measurePoints,
+              point,
+            ]
+          );
+        }
       }}
     >
       <planeGeometry
-        args={[28, 28]}
+        args={[
+          28,
+          28,
+        ]}
       />
 
       <meshBasicMaterial
         transparent
         opacity={0}
+        depthWrite={false}
       />
     </mesh>
   );
 }
 
-/* =========================
-   SCENE
-========================= */
+
+/* ============================================================
+   MAIN SCENE
+============================================================ */
 
 function SceneCanvas() {
   return (
@@ -1411,54 +2820,100 @@ function SceneCanvas() {
         position: [
           10.7,
           8.5,
-          11.5
+          11.5,
         ],
-        fov: 39
+
+        fov: 39,
+
+        near: 0.1,
+
+        far: 100,
       }}
-      dpr={[1, 1.5]}
+      dpr={[
+        1,
+        1.5,
+      ]}
       gl={{
-        preserveDrawingBuffer: true,
-        antialias: true
+        preserveDrawingBuffer:
+          false,
+
+        antialias:
+          true,
+
+        powerPreference:
+          'high-performance',
       }}
     >
+
+      {/* Background */}
+
       <color
         attach="background"
-        args={['#020812']}
+        args={[
+          '#020812',
+        ]}
       />
+
 
       <fog
         attach="fog"
         args={[
           '#020812',
-          13,
-          30
+          14,
+          32,
         ]}
       />
+
+
+      {/* Lights */}
 
       <ambientLight
         intensity={0.65}
       />
 
+
       <directionalLight
-        position={[5, 9, 6]}
-        intensity={1.55}
+        position={[
+          5,
+          9,
+          6,
+        ]}
+        intensity={1.35}
       />
+
 
       <pointLight
         position={[
           -4,
           3,
-          3
+          3,
         ]}
-        intensity={1}
+        intensity={0.75}
         color="#075b99"
       />
 
-      <RealField />
+
+      {/* Load uploaded scientific dataset */}
+
+      <RealFieldLoader />
+
+
+      {/* =====================================================
+          MAIN OCEAN
+      ===================================================== */}
 
       <OceanVolume />
 
+
+      {/* =====================================================
+          OPTIONAL SCIENTIFIC LAYERS
+      ===================================================== */}
+
       <Bathymetry />
+
+      <ChlorophyllLayer />
+
+      <SeaSurfaceHeightLayer />
 
       <Argo />
 
@@ -1468,32 +2923,66 @@ function SceneCanvas() {
 
       <DepthSlice />
 
-      <Isosurface />
+
+      {/* =====================================================
+          MEASUREMENT
+      ===================================================== */}
 
       <MeasureLayer />
 
       <ClickPlane />
+
+
+      {/* =====================================================
+          CAMERA
+      ===================================================== */}
 
       <OrbitControls
         enableDamping
         dampingFactor={0.075}
         maxDistance={25}
         minDistance={6}
+        maxPolarAngle={
+          Math.PI * 0.9
+        }
+        rotateSpeed={0.65}
+        zoomSpeed={0.8}
+        panSpeed={0.7}
       />
+
     </Canvas>
   );
 }
 
-/* =========================
-   EXPORT
-========================= */
+
+/* ============================================================
+   MAIN EXPORT
+============================================================ */
 
 export default function OceanScene() {
   return (
-    <div className="scene">
+    <div
+      className="scene"
+      style={{
+        width: '100%',
+        height: '100%',
+        minHeight: '500px',
+        position: 'relative',
+        overflow: 'hidden',
+
+        background:
+          'radial-gradient(circle at 50% 30%, #08243a 0%, #020812 70%)',
+      }}
+    >
+
       <SceneErrorBoundary>
         <SceneCanvas />
       </SceneErrorBoundary>
+
+
+      {/* =====================================================
+          GEOGRAPHIC LABELS
+      ===================================================== */}
 
       <div className="geo-longitudes">
         <span>84°E</span>
@@ -1502,11 +2991,13 @@ export default function OceanScene() {
         <span>90°E</span>
       </div>
 
+
       <div className="geo-latitudes">
         <span>16°N</span>
         <span>14°N</span>
         <span>12°N</span>
       </div>
+
 
       <div className="geo-depth">
         <span>0 m</span>
@@ -1517,13 +3008,20 @@ export default function OceanScene() {
         <span>2000 m</span>
       </div>
 
+
+      {/* =====================================================
+          CROSS SECTION
+      ===================================================== */}
+
       <div className="endpoint a">
         A
       </div>
 
+
       <div className="endpoint b">
         B
       </div>
+
 
       <div className="cross">
         <span>
@@ -1535,9 +3033,15 @@ export default function OceanScene() {
         </b>
       </div>
 
+
+      {/* =====================================================
+          INTERACTION HINT
+      ===================================================== */}
+
       <div className="scene-hint">
         Drag to rotate · Scroll to zoom · Right drag to pan
       </div>
+
     </div>
   );
 }
