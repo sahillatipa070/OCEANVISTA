@@ -26,30 +26,64 @@ import { useOceanStore } from '../store/oceanStore';
    CONFIGURATION
 ============================================================ */
 
-const API =
-  'https://oceanvista-backend.onrender.com';
+const API = 'https://oceanvista-backend.onrender.com';
 
 const W = 10;
 const H = 6;
 const D = 7;
 
-const MAX_FIELD_POINTS = 140000;
+const MAX_FIELD_POINTS = 120000;
 const MAX_SLICE_POINTS = 30000;
+const MAX_ISO_AXIS = 42;
 
 
 /* ============================================================
    HELPERS
 ============================================================ */
 
-const clamp = (
+function clamp(
   n: number,
   min: number,
   max: number
-) =>
-  Math.max(
+) {
+  return Math.max(
     min,
     Math.min(max, n)
   );
+}
+
+
+function normalizeMode(
+  mode: string | undefined
+) {
+  return String(mode || '')
+    .toLowerCase()
+    .replace(/[\s_-]/g, '');
+}
+
+
+function isIsoMode(
+  mode: string | undefined
+) {
+  const value = normalizeMode(mode);
+
+  return (
+    value === 'isosurface' ||
+    value === 'iso'
+  );
+}
+
+
+function isSliceMode(
+  mode: string | undefined
+) {
+  const value = normalizeMode(mode);
+
+  return (
+    value === 'depthslice' ||
+    value === 'slice'
+  );
+}
 
 
 /* ============================================================
@@ -60,10 +94,7 @@ function palette(
   t: number,
   scale: string
 ) {
-  const palettes: Record<
-    string,
-    string[]
-  > = {
+  const palettes: Record<string, string[]> = {
     Turbo: [
       '#30123b',
       '#4145ab',
@@ -122,8 +153,7 @@ function palette(
     clamp(t, 0, 1);
 
   const scaled =
-    value *
-    (colors.length - 1);
+    value * (colors.length - 1);
 
   const index =
     Math.floor(scaled);
@@ -185,9 +215,7 @@ class SceneErrorBoundary extends React.Component<
   }
 
   render() {
-    if (
-      this.state.hasError
-    ) {
+    if (this.state.hasError) {
       return (
         <div
           style={{
@@ -203,7 +231,6 @@ class SceneErrorBoundary extends React.Component<
           }}
         >
           3D renderer encountered an error.
-          Please change the visualization mode.
         </div>
       );
     }
@@ -219,14 +246,16 @@ class SceneErrorBoundary extends React.Component<
 
 function WaterSurface() {
   const geometry =
-    useMemo(() => {
-      return new THREE.PlaneGeometry(
-        W,
-        D,
-        64,
-        48
-      );
-    }, []);
+    useMemo(
+      () =>
+        new THREE.PlaneGeometry(
+          W,
+          D,
+          64,
+          48
+        ),
+      []
+    );
 
   const lastNormalUpdate =
     useRef(0);
@@ -282,7 +311,6 @@ function WaterSurface() {
       );
     }
 
-
     positions.needsUpdate =
       true;
 
@@ -323,6 +351,7 @@ function WaterSurface() {
         transparent
         opacity={0.68}
         side={THREE.DoubleSide}
+        depthWrite={false}
       />
     </mesh>
   );
@@ -358,7 +387,6 @@ function RealFieldLoader() {
         state.set
     );
 
-
   const [loading, setLoading] =
     useState(false);
 
@@ -366,14 +394,27 @@ function RealFieldLoader() {
     useState('');
 
 
+  /*
+    IMPORTANT FIX:
+
+    Extract the ID before the async
+    function so TypeScript knows that
+    datasetId cannot be null.
+  */
+  const datasetId =
+    modelDataset?.id;
+
+
   useEffect(() => {
-    if (
-      !modelDataset?.id
-    ) {
+
+    if (!datasetId) {
       setStore(
         'modelField',
         null
       );
+
+      setLoading(false);
+      setError('');
 
       return;
     }
@@ -396,12 +437,14 @@ function RealFieldLoader() {
         const url =
           `${API}/api/datasets/` +
           `${encodeURIComponent(
-            modelDataset.id
+            String(datasetId)
           )}` +
           `/field?variable=${encodeURIComponent(
-            variable
+            String(variable)
           )}` +
-          `&time_index=${timeIndex}`;
+          `&time_index=${encodeURIComponent(
+            String(timeIndex)
+          )}`;
 
 
         console.log(
@@ -421,6 +464,7 @@ function RealFieldLoader() {
 
 
         let data: any;
+
 
         try {
           data =
@@ -461,6 +505,7 @@ function RealFieldLoader() {
           'modelField',
           {
             ...data,
+
             values: [
               ...data.values,
             ],
@@ -502,6 +547,7 @@ function RealFieldLoader() {
                 String(item)
             );
 
+
           setStore(
             'dataTimes',
             times
@@ -517,6 +563,7 @@ function RealFieldLoader() {
               0
             );
           }
+
         } else {
           setStore(
             'dataTimes',
@@ -526,11 +573,11 @@ function RealFieldLoader() {
 
 
         console.log(
-          'Real field loaded:',
-          data
+          'Real field loaded successfully'
         );
 
       } catch (err: any) {
+
         if (
           err?.name ===
           'AbortError'
@@ -558,24 +605,25 @@ function RealFieldLoader() {
         }
 
       } finally {
+
         if (!cancelled) {
           setLoading(false);
         }
+
       }
     }
 
 
-    loadField();
+    void loadField();
 
 
     return () => {
       cancelled = true;
-
       controller.abort();
     };
 
   }, [
-    modelDataset?.id,
+    datasetId,
     variable,
     timeIndex,
     setStore,
@@ -609,7 +657,7 @@ function RealFieldLoader() {
 
 
 /* ============================================================
-   REAL FIELD POINTS
+   FIELD VOLUME POINTS
 ============================================================ */
 
 function FieldPoints() {
@@ -664,8 +712,18 @@ function FieldPoints() {
 
   const geometry =
     useMemo(() => {
+
+      if (
+        isIsoMode(mode) ||
+        isSliceMode(mode)
+      ) {
+        return null;
+      }
+
+
       const field =
         modelField;
+
 
       if (
         !field?.shape ||
@@ -678,25 +736,19 @@ function FieldPoints() {
 
 
       const nx =
-        Number(
-          field.shape.nx
-        );
+        Number(field.shape.nx);
 
       const ny =
-        Number(
-          field.shape.ny
-        );
+        Number(field.shape.ny);
 
       const nz =
-        Number(
-          field.shape.nz
-        );
+        Number(field.shape.nz);
 
 
       if (
-        !nx ||
-        !ny ||
-        !nz
+        nx < 1 ||
+        ny < 1 ||
+        nz < 1
       ) {
         return null;
       }
@@ -711,14 +763,7 @@ function FieldPoints() {
         expected
       ) {
         console.error(
-          'Field shape/value mismatch:',
-          {
-            nx,
-            ny,
-            nz,
-            values:
-              field.values.length,
-          }
+          'Field shape/value mismatch'
         );
 
         return null;
@@ -726,13 +771,15 @@ function FieldPoints() {
 
 
       const samplingStep =
-        expected >
-        MAX_FIELD_POINTS
-          ? Math.ceil(
-              Math.pow(
-                expected /
-                  MAX_FIELD_POINTS,
-                1 / 3
+        expected > MAX_FIELD_POINTS
+          ? Math.max(
+              1,
+              Math.ceil(
+                Math.pow(
+                  expected /
+                    MAX_FIELD_POINTS,
+                  1 / 3
+                )
               )
             )
           : 1;
@@ -745,20 +792,11 @@ function FieldPoints() {
         [];
 
 
-      const dataMin =
-        Number.isFinite(
-          Number(field.min)
-        )
-          ? Number(field.min)
-          : colorMin;
+      const fieldMin =
+        Number(field.min);
 
-
-      const dataMax =
-        Number.isFinite(
-          Number(field.max)
-        )
-          ? Number(field.max)
-          : colorMax;
+      const fieldMax =
+        Number(field.max);
 
 
       const lo =
@@ -766,7 +804,7 @@ function FieldPoints() {
           Number(colorMin)
         )
           ? Number(colorMin)
-          : Number(dataMin);
+          : fieldMin;
 
 
       const hi =
@@ -777,7 +815,7 @@ function FieldPoints() {
           ? Number(colorMax)
           : Math.max(
               lo + 1e-8,
-              Number(dataMax)
+              fieldMax
             );
 
 
@@ -785,18 +823,6 @@ function FieldPoints() {
         Math.max(
           1e-8,
           hi - lo
-        );
-
-
-      const isoValue =
-        lo +
-        range * 0.58;
-
-
-      const isoTolerance =
-        Math.max(
-          range * 0.04,
-          1e-8
         );
 
 
@@ -836,24 +862,8 @@ function FieldPoints() {
             }
 
 
-            if (
-              mode ===
-                'Isosurface' &&
-              Math.abs(
-                value -
-                isoValue
-              ) >
-                isoTolerance
-            ) {
-              continue;
-            }
-
-
             let t =
-              (
-                value -
-                lo
-              ) /
+              (value - lo) /
               range;
 
 
@@ -992,15 +1002,6 @@ function FieldPoints() {
 
   return (
     <points
-      key={
-        `field-${
-          modelField?.dataset_id ||
-          'data'
-        }-${
-          modelField?.time_index ||
-          0
-        }-${mode}`
-      }
       geometry={geometry}
       scale={[
         1,
@@ -1009,25 +1010,14 @@ function FieldPoints() {
       ]}
     >
       <pointsMaterial
-        size={
-          mode ===
-          'Isosurface'
-            ? 0.14
-            : 0.1
-        }
+        size={0.075}
         vertexColors
         transparent
         opacity={
-          mode ===
-          'Isosurface'
-            ? Math.min(
-                0.92,
-                opacity
-              )
-            : Math.min(
-                0.88,
-                opacity * 0.88
-              )
+          Math.min(
+            0.88,
+            opacity * 0.85
+          )
         }
         sizeAttenuation
         depthWrite={false}
@@ -1038,7 +1028,686 @@ function FieldPoints() {
 
 
 /* ============================================================
-   FALLBACK DEMO VOLUME
+   ISOSURFACE HELPERS
+============================================================ */
+
+type Vec3 =
+  THREE.Vector3;
+
+
+const TETRAHEDRA = [
+  [0, 5, 1, 6],
+  [0, 1, 2, 6],
+  [0, 2, 3, 6],
+  [0, 3, 7, 6],
+  [0, 7, 4, 6],
+  [0, 4, 5, 6],
+] as const;
+
+
+const CUBE_CORNERS = [
+  [0, 0, 0],
+  [1, 0, 0],
+  [1, 1, 0],
+  [0, 1, 0],
+  [0, 0, 1],
+  [1, 0, 1],
+  [1, 1, 1],
+  [0, 1, 1],
+] as const;
+
+
+const TETRA_EDGES = [
+  [0, 1],
+  [0, 2],
+  [0, 3],
+  [1, 2],
+  [1, 3],
+  [2, 3],
+] as const;
+
+
+function interpolatePoint(
+  a: Vec3,
+  b: Vec3,
+  va: number,
+  vb: number,
+  iso: number
+) {
+  const delta =
+    vb - va;
+
+  let t =
+    Math.abs(delta) <
+    1e-12
+      ? 0.5
+      : (iso - va) /
+        delta;
+
+
+  t =
+    clamp(
+      t,
+      0,
+      1
+    );
+
+
+  return new THREE.Vector3(
+    a.x +
+      (b.x - a.x) * t,
+
+    a.y +
+      (b.y - a.y) * t,
+
+    a.z +
+      (b.z - a.z) * t
+  );
+}
+
+
+function addTriangle(
+  output: number[],
+  a: Vec3,
+  b: Vec3,
+  c: Vec3
+) {
+  output.push(
+    a.x, a.y, a.z,
+    b.x, b.y, b.z,
+    c.x, c.y, c.z
+  );
+}
+
+
+/* ============================================================
+   ISOSURFACE
+============================================================ */
+
+function Isosurface() {
+  const modelField =
+    useOceanStore(
+      (state) =>
+        state.modelField
+    );
+
+  const mode =
+    useOceanStore(
+      (state) =>
+        state.mode
+    );
+
+  const vertical =
+    useOceanStore(
+      (state) =>
+        state.vertical
+    );
+
+  const opacity =
+    useOceanStore(
+      (state) =>
+        state.opacity
+    );
+
+  const colorScale =
+    useOceanStore(
+      (state) =>
+        state.colorScale
+    );
+
+  const colorMin =
+    useOceanStore(
+      (state) =>
+        state.colorMin
+    );
+
+  const colorMax =
+    useOceanStore(
+      (state) =>
+        state.colorMax
+    );
+
+
+  const geometry =
+    useMemo(() => {
+
+      if (!isIsoMode(mode)) {
+        return null;
+      }
+
+
+      const field =
+        modelField;
+
+
+      if (
+        !field?.shape ||
+        !Array.isArray(
+          field.values
+        )
+      ) {
+        return null;
+      }
+
+
+      const nx =
+        Number(field.shape.nx);
+
+      const ny =
+        Number(field.shape.ny);
+
+      const nz =
+        Number(field.shape.nz);
+
+
+      if (
+        nx < 2 ||
+        ny < 2 ||
+        nz < 2
+      ) {
+        return null;
+      }
+
+
+      const expected =
+        nx * ny * nz;
+
+
+      if (
+        field.values.length <
+        expected
+      ) {
+        return null;
+      }
+
+
+      const stepX =
+        Math.max(
+          1,
+          Math.ceil(
+            nx / MAX_ISO_AXIS
+          )
+        );
+
+      const stepY =
+        Math.max(
+          1,
+          Math.ceil(
+            ny / MAX_ISO_AXIS
+          )
+        );
+
+      const stepZ =
+        Math.max(
+          1,
+          Math.ceil(
+            nz / MAX_ISO_AXIS
+          )
+        );
+
+
+      const lo =
+        Number.isFinite(
+          Number(colorMin)
+        )
+          ? Number(colorMin)
+          : Number(field.min);
+
+
+      const hi =
+        Number.isFinite(
+          Number(colorMax)
+        ) &&
+        Number(colorMax) > lo
+          ? Number(colorMax)
+          : Math.max(
+              lo + 1e-8,
+              Number(field.max)
+            );
+
+
+      const isoValue =
+        lo +
+        (hi - lo) * 0.58;
+
+
+      const positions: number[] =
+        [];
+
+
+      function getValue(
+        x: number,
+        y: number,
+        z: number
+      ) {
+        const index =
+          z * ny * nx +
+          y * nx +
+          x;
+
+        const value =
+          Number(
+            field.values[index]
+          );
+
+        return Number.isFinite(value)
+          ? value
+          : NaN;
+      }
+
+
+      for (
+        let z = 0;
+        z < nz - 1;
+        z += stepZ
+      ) {
+        const z1 =
+          Math.min(
+            z + stepZ,
+            nz - 1
+          );
+
+
+        for (
+          let y = 0;
+          y < ny - 1;
+          y += stepY
+        ) {
+          const y1 =
+            Math.min(
+              y + stepY,
+              ny - 1
+            );
+
+
+          for (
+            let x = 0;
+            x < nx - 1;
+            x += stepX
+          ) {
+            const x1 =
+              Math.min(
+                x + stepX,
+                nx - 1
+              );
+
+
+            const xs = [
+              x,
+              x1,
+            ];
+
+            const ys = [
+              y,
+              y1,
+            ];
+
+            const zs = [
+              z,
+              z1,
+            ];
+
+
+            const cubePoints:
+              THREE.Vector3[] =
+              [];
+
+            const cubeValues:
+              number[] =
+              [];
+
+
+            let invalid =
+              false;
+
+
+            for (
+              const corner of
+              CUBE_CORNERS
+            ) {
+              const gx =
+                xs[corner[0]];
+
+              const gy =
+                ys[corner[1]];
+
+              const gz =
+                zs[corner[2]];
+
+
+              if (
+                gx === undefined ||
+                gy === undefined ||
+                gz === undefined
+              ) {
+                invalid = true;
+                break;
+              }
+
+
+              const value =
+                getValue(
+                  gx,
+                  gy,
+                  gz
+                );
+
+
+              if (
+                !Number.isFinite(
+                  value
+                )
+              ) {
+                invalid = true;
+                break;
+              }
+
+
+              const px =
+                (
+                  gx /
+                    Math.max(
+                      1,
+                      nx - 1
+                    ) -
+                  0.5
+                ) *
+                W;
+
+
+              const py =
+                H / 2 -
+                (
+                  gz /
+                  Math.max(
+                    1,
+                    nz - 1
+                  )
+                ) *
+                H;
+
+
+              const pz =
+                (
+                  gy /
+                    Math.max(
+                      1,
+                      ny - 1
+                    ) -
+                  0.5
+                ) *
+                D;
+
+
+              cubePoints.push(
+                new THREE.Vector3(
+                  px,
+                  py,
+                  pz
+                )
+              );
+
+              cubeValues.push(
+                value
+              );
+            }
+
+
+            if (
+              invalid ||
+              cubePoints.length !== 8
+            ) {
+              continue;
+            }
+
+
+            for (
+              const tetra of
+              TETRAHEDRA
+            ) {
+              const points =
+                tetra.map(
+                  (index) =>
+                    cubePoints[index]
+                );
+
+              const values =
+                tetra.map(
+                  (index) =>
+                    cubeValues[index]
+                );
+
+
+              if (
+                points.some(
+                  (p) =>
+                    p === undefined
+                ) ||
+                values.some(
+                  (v) =>
+                    v === undefined
+                )
+              ) {
+                continue;
+              }
+
+
+              const intersections:
+                THREE.Vector3[] =
+                [];
+
+
+              for (
+                const edge of
+                TETRA_EDGES
+              ) {
+                const a =
+                  edge[0];
+
+                const b =
+                  edge[1];
+
+                const va =
+                  values[a];
+
+                const vb =
+                  values[b];
+
+                const pa =
+                  points[a];
+
+                const pb =
+                  points[b];
+
+
+                if (
+                  va === undefined ||
+                  vb === undefined ||
+                  !pa ||
+                  !pb
+                ) {
+                  continue;
+                }
+
+
+                const crosses =
+                  (va < isoValue) !==
+                  (vb < isoValue);
+
+
+                if (crosses) {
+                  intersections.push(
+                    interpolatePoint(
+                      pa,
+                      pb,
+                      va,
+                      vb,
+                      isoValue
+                    )
+                  );
+                }
+              }
+
+
+              if (
+                intersections.length < 3
+              ) {
+                continue;
+              }
+
+
+              if (
+                intersections.length === 3
+              ) {
+                addTriangle(
+                  positions,
+                  intersections[0],
+                  intersections[1],
+                  intersections[2]
+                );
+
+                continue;
+              }
+
+
+              const center =
+                new THREE.Vector3();
+
+
+              intersections.forEach(
+                (p) =>
+                  center.add(p)
+              );
+
+
+              center.divideScalar(
+                intersections.length
+              );
+
+
+              for (
+                let i = 1;
+                i <
+                intersections.length - 1;
+                i++
+              ) {
+                addTriangle(
+                  positions,
+                  intersections[0],
+                  intersections[i],
+                  intersections[i + 1]
+                );
+              }
+            }
+          }
+        }
+      }
+
+
+      if (
+        positions.length === 0
+      ) {
+        return null;
+      }
+
+
+      const result =
+        new THREE.BufferGeometry();
+
+
+      result.setAttribute(
+        'position',
+        new THREE.Float32BufferAttribute(
+          positions,
+          3
+        )
+      );
+
+
+      result.computeVertexNormals();
+      result.computeBoundingSphere();
+
+
+      return result;
+
+    }, [
+      modelField,
+      mode,
+      colorMin,
+      colorMax,
+    ]);
+
+
+  useEffect(() => {
+    return () => {
+      geometry?.dispose();
+    };
+  }, [geometry]);
+
+
+  if (!geometry) {
+    return null;
+  }
+
+
+  const surfaceColor =
+    palette(
+      0.58,
+      colorScale
+    );
+
+
+  return (
+    <group
+      scale={[
+        1,
+        vertical,
+        1,
+      ]}
+    >
+      <mesh
+        geometry={geometry}
+      >
+        <meshPhysicalMaterial
+          color={surfaceColor}
+          emissive={surfaceColor}
+          emissiveIntensity={0.22}
+          roughness={0.34}
+          metalness={0.08}
+          transparent
+          opacity={
+            Math.min(
+              0.92,
+              Math.max(
+                0.25,
+                opacity
+              )
+            )
+          }
+          side={THREE.DoubleSide}
+          depthWrite={false}
+        />
+      </mesh>
+
+
+      <mesh
+        geometry={geometry}
+      >
+        <meshBasicMaterial
+          color="#b9f5ff"
+          wireframe
+          transparent
+          opacity={0.12}
+          depthWrite={false}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+
+/* ============================================================
+   FALLBACK VOLUME
 ============================================================ */
 
 function FallbackVolume() {
@@ -1076,26 +1745,20 @@ function FallbackVolume() {
       ]}
     >
       {Array.from(
-        {
-          length: 38,
-        },
+        { length: 38 },
         (_, index) => {
           const q =
             index / 37;
 
           const timeOffset =
-            (
-              timeIndex %
-              8
-            ) /
-            8 *
+            ((timeIndex % 8) / 8) *
             0.16;
 
           const t =
             clamp(
               1 -
-              q +
-              timeOffset,
+                q +
+                timeOffset,
               0,
               1
             );
@@ -1109,9 +1772,7 @@ function FallbackVolume() {
 
           return (
             <mesh
-              key={
-                `fallback-${index}-${timeIndex}`
-              }
+              key={`fallback-${index}`}
               position={[
                 0,
                 H / 2 -
@@ -1139,16 +1800,13 @@ function FallbackVolume() {
                     0.015 +
                     0.06 *
                       Math.sin(
-                        q *
-                        Math.PI
+                        q * Math.PI
                       )
                   ) *
                   opacity
                 }
                 depthWrite={false}
-                side={
-                  THREE.DoubleSide
-                }
+                side={THREE.DoubleSide}
               />
             </mesh>
           );
@@ -1189,10 +1847,12 @@ function OceanVolume() {
     );
 
 
+  const numericalEnabled =
+    layers['Numerical Model'];
+
+
   return (
     <group>
-
-      {/* Scientific volume boundary */}
 
       <mesh
         scale={[
@@ -1214,9 +1874,7 @@ function OceanVolume() {
           transparent
           opacity={0.025}
           depthWrite={false}
-          side={
-            THREE.DoubleSide
-          }
+          side={THREE.DoubleSide}
         />
 
         <Edges
@@ -1227,13 +1885,9 @@ function OceanVolume() {
       </mesh>
 
 
-      {/* Numerical model */}
-
-      {layers[
-        'Numerical Model'
-      ] &&
-        mode !==
-          'Depth Slice' &&
+      {numericalEnabled &&
+        !isIsoMode(mode) &&
+        !isSliceMode(mode) &&
         (
           modelField
             ? <FieldPoints />
@@ -1241,7 +1895,11 @@ function OceanVolume() {
         )}
 
 
-      {/* Main ocean surface */}
+      {numericalEnabled &&
+        isIsoMode(mode) &&
+        <Isosurface />
+      }
+
 
       <WaterSurface />
 
@@ -1280,11 +1938,7 @@ function Argo() {
     );
 
 
-  if (
-    !layers[
-      'Argo Floats'
-    ]
-  ) {
+  if (!layers['Argo Floats']) {
     return null;
   }
 
@@ -1298,12 +1952,15 @@ function Argo() {
 
 
   return (
-    <group>
+    <group
+      scale={[
+        1,
+        vertical,
+        1,
+      ]}
+    >
       {ids.map(
-        (
-          id,
-          index
-        ) => {
+        (id, index) => {
           const active =
             instrumentId === id;
 
@@ -1322,16 +1979,10 @@ function Argo() {
               key={id}
               position={[
                 x,
-                (
-                  H / 2 -
-                  0.1
-                ) *
-                  vertical,
+                H / 2 - 0.1,
                 z,
               ]}
-              onClick={(
-                event
-              ) => {
+              onClick={(event) => {
                 event.stopPropagation();
 
                 setStore(
@@ -1374,22 +2025,12 @@ function Argo() {
 
               <Line
                 points={[
-                  [
-                    0,
-                    0,
-                    0,
-                  ],
-                  [
-                    0,
-                    -3.2 *
-                      vertical,
-                    0,
-                  ],
+                  [0, 0, 0],
+                  [0, -3.2, 0],
                 ]}
                 color="#70dcff"
                 transparent
                 opacity={0.75}
-                lineWidth={1}
               />
 
 
@@ -1413,7 +2054,6 @@ function Argo() {
                   </div>
                 </Html>
               )}
-
             </group>
           );
         }
@@ -1447,30 +2087,23 @@ function Glider() {
     );
 
   const groupRef =
-    useRef<THREE.Group>(
+    useRef<THREE.Group | null>(
       null
     );
 
 
-  useFrame(
-    ({ clock }) => {
-      if (
-        groupRef.current
-      ) {
-        groupRef.current.position.x =
-          0.18 *
-          Math.sin(
-            clock.elapsedTime *
-            0.55
-          );
-      }
+  useFrame(({ clock }) => {
+    if (groupRef.current) {
+      groupRef.current.position.x =
+        0.18 *
+        Math.sin(
+          clock.elapsedTime * 0.55
+        );
     }
-  );
+  });
 
 
-  if (
-    !layers.Gliders
-  ) {
+  if (!layers.Gliders) {
     return null;
   }
 
@@ -1498,9 +2131,7 @@ function Glider() {
         vertical,
         1,
       ]}
-      onClick={(
-        event
-      ) => {
+      onClick={(event) => {
         event.stopPropagation();
 
         setStore(
@@ -1522,10 +2153,7 @@ function Glider() {
 
 
       {points.map(
-        (
-          point,
-          index
-        ) => (
+        (point, index) => (
           <mesh
             key={index}
             position={point}
@@ -1560,7 +2188,6 @@ function Glider() {
           </b>
         </div>
       </Html>
-
     </group>
   );
 }
@@ -1578,25 +2205,20 @@ function Currents() {
     );
 
   const groupRef =
-    useRef<THREE.Group>(
+    useRef<THREE.Group | null>(
       null
     );
 
 
-  useFrame(
-    ({ clock }) => {
-      if (
-        groupRef.current
-      ) {
-        groupRef.current.position.x =
-          0.12 *
-          Math.sin(
-            clock.elapsedTime *
-            0.4
-          );
-      }
+  useFrame(({ clock }) => {
+    if (groupRef.current) {
+      groupRef.current.position.x =
+        0.12 *
+        Math.sin(
+          clock.elapsedTime * 0.4
+        );
     }
-  );
+  });
 
 
   if (!enabled) {
@@ -1606,17 +2228,13 @@ function Currents() {
 
   return (
     <group ref={groupRef}>
-
       {Array.from(
-        {
-          length: 28,
-        },
+        { length: 28 },
         (_, index) => {
 
           const x =
             -4.5 +
-            (index % 7) *
-            1.5;
+            (index % 7) * 1.5;
 
           const z =
             -2.7 +
@@ -1628,6 +2246,7 @@ function Currents() {
           const angle =
             index * 0.73;
 
+
           const end: [
             number,
             number,
@@ -1635,26 +2254,21 @@ function Currents() {
           ] = [
             x +
               0.52 *
-              Math.cos(angle),
+                Math.cos(angle),
 
             2.7,
 
             z +
               0.52 *
-              Math.sin(angle),
+                Math.sin(angle),
           ];
 
 
           return (
             <group key={index}>
-
               <Line
                 points={[
-                  [
-                    x,
-                    2.7,
-                    z,
-                  ],
+                  [x, 2.7, z],
                   end,
                 ]}
                 color="#75dcff"
@@ -1662,13 +2276,12 @@ function Currents() {
                 opacity={0.8}
               />
 
-
               <mesh
                 position={end}
                 rotation={[
                   0,
                   angle -
-                  Math.PI / 2,
+                    Math.PI / 2,
                   0,
                 ]}
               >
@@ -1684,12 +2297,10 @@ function Currents() {
                   color="#b5efff"
                 />
               </mesh>
-
             </group>
           );
         }
       )}
-
     </group>
   );
 }
@@ -1706,19 +2317,13 @@ function DepthSlice() {
 
   const geometry =
     useMemo(() => {
+
       const field =
         s.modelField;
 
 
       if (
-        s.mode !==
-        'Depth Slice'
-      ) {
-        return null;
-      }
-
-
-      if (
+        !isSliceMode(s.mode) ||
         !field?.shape ||
         !Array.isArray(
           field.values
@@ -1729,25 +2334,19 @@ function DepthSlice() {
 
 
       const nx =
-        Number(
-          field.shape.nx
-        );
+        Number(field.shape.nx);
 
       const ny =
-        Number(
-          field.shape.ny
-        );
+        Number(field.shape.ny);
 
       const nz =
-        Number(
-          field.shape.nz
-        );
+        Number(field.shape.nz);
 
 
       if (
-        !nx ||
-        !ny ||
-        !nz
+        nx < 1 ||
+        ny < 1 ||
+        nz < 1
       ) {
         return null;
       }
@@ -1757,9 +2356,7 @@ function DepthSlice() {
 
 
       if (
-        Array.isArray(
-          field.depth
-        ) &&
+        Array.isArray(field.depth) &&
         field.depth.length > 0
       ) {
         let closest =
@@ -1793,8 +2390,7 @@ function DepthSlice() {
         zIndex =
           Math.round(
             clamp(
-              s.depth /
-              2000,
+              s.depth / 2000,
               0,
               1
             ) *
@@ -1804,10 +2400,12 @@ function DepthSlice() {
 
 
       zIndex =
-        clamp(
-          zIndex,
-          0,
-          nz - 1
+        Math.round(
+          clamp(
+            zIndex,
+            0,
+            nz - 1
+          )
         );
 
 
@@ -1819,17 +2417,23 @@ function DepthSlice() {
 
 
       const lo =
-        Number(
-          s.colorMin
-        );
+        Number.isFinite(
+          Number(s.colorMin)
+        )
+          ? Number(s.colorMin)
+          : Number(field.min);
+
 
       const hi =
-        Math.max(
-          lo + 1e-8,
-          Number(
-            s.colorMax
-          )
-        );
+        Number.isFinite(
+          Number(s.colorMax)
+        ) &&
+        Number(s.colorMax) > lo
+          ? Number(s.colorMax)
+          : Math.max(
+              lo + 1e-8,
+              Number(field.max)
+            );
 
 
       const total =
@@ -1837,12 +2441,14 @@ function DepthSlice() {
 
 
       const step =
-        total >
-        MAX_SLICE_POINTS
-          ? Math.ceil(
-              Math.sqrt(
-                total /
-                MAX_SLICE_POINTS
+        total > MAX_SLICE_POINTS
+          ? Math.max(
+              1,
+              Math.ceil(
+                Math.sqrt(
+                  total /
+                  MAX_SLICE_POINTS
+                )
               )
             )
           : 1;
@@ -1881,9 +2487,7 @@ function DepthSlice() {
 
           const value =
             Number(
-              field.values[
-                index
-              ]
+              field.values[index]
             );
 
 
@@ -1897,13 +2501,10 @@ function DepthSlice() {
 
 
           let t =
-            (
-              value -
-              lo
-            ) /
-            (
-              hi -
-              lo
+            (value - lo) /
+            Math.max(
+              1e-8,
+              hi - lo
             );
 
 
@@ -2002,7 +2603,6 @@ function DepthSlice() {
 
       result.computeBoundingSphere();
 
-
       return result;
 
     }, [
@@ -2025,17 +2625,22 @@ function DepthSlice() {
 
   if (
     !geometry ||
-    s.mode !==
-      'Depth Slice'
+    !isSliceMode(s.mode)
   ) {
     return null;
   }
 
 
+  const position =
+    geometry.attributes.position;
+
+  if (!position || position.count === 0) {
+    return null;
+  }
+
+
   const y =
-    geometry.attributes
-      .position
-      .getY(0);
+    position.getY(0);
 
 
   return (
@@ -2046,12 +2651,10 @@ function DepthSlice() {
         1,
       ]}
     >
-      <points
-        geometry={geometry}
-      >
+      <points geometry={geometry}>
         <pointsMaterial
           vertexColors
-          size={0.13}
+          size={0.1}
           sizeAttenuation
           transparent
           opacity={
@@ -2067,61 +2670,16 @@ function DepthSlice() {
 
       <Line
         points={[
-          [
-            -W / 2,
-            y,
-            -D / 2,
-          ],
-
-          [
-            W / 2,
-            y,
-            -D / 2,
-          ],
-
-          [
-            W / 2,
-            y,
-            D / 2,
-          ],
-
-          [
-            -W / 2,
-            y,
-            D / 2,
-          ],
-
-          [
-            -W / 2,
-            y,
-            -D / 2,
-          ],
+          [-W / 2, y, -D / 2],
+          [W / 2, y, -D / 2],
+          [W / 2, y, D / 2],
+          [-W / 2, y, D / 2],
+          [-W / 2, y, -D / 2],
         ]}
         color="#79eaff"
         transparent
         opacity={0.8}
       />
-
-
-      <Html
-        position={[
-          3.3,
-          y + 0.2,
-          1.8,
-        ]}
-        distanceFactor={8}
-      >
-        <div className="scene-label">
-          <span>
-            DEPTH SLICE
-          </span>
-
-          <b>
-            {s.depth} m
-          </b>
-        </div>
-      </Html>
-
     </group>
   );
 }
@@ -2147,6 +2705,7 @@ function Bathymetry() {
 
   const geometry =
     useMemo(() => {
+
       const geo =
         new THREE.PlaneGeometry(
           W - 0.12,
@@ -2183,20 +2742,13 @@ function Bathymetry() {
                 (
                   (z - 0.1) ** 2
                 )
-              ) /
-              3
+              ) / 3
             ) +
           0.22 *
-            Math.sin(
-              x * 1.3
-            ) *
-            Math.cos(
-              z * 1.8
-            ) +
+            Math.sin(x * 1.3) *
+            Math.cos(z * 1.8) +
           0.08 *
-            Math.sin(
-              z * 4
-            );
+            Math.sin(z * 4);
 
 
         position.setZ(
@@ -2210,7 +2762,6 @@ function Bathymetry() {
         true;
 
       geo.computeVertexNormals();
-
 
       return geo;
 
@@ -2230,41 +2781,43 @@ function Bathymetry() {
 
 
   return (
-    <mesh
-      geometry={geometry}
-      position={[
-        0,
-        -(
-          H / 2
-        ) *
-          vertical +
-          0.08,
-        0,
-      ]}
-      rotation={[
-        -Math.PI / 2,
-        0,
-        0,
+    <group
+      scale={[
+        1,
+        vertical,
+        1,
       ]}
     >
-      <meshStandardMaterial
-        color="#0b5f63"
-        emissive="#04383a"
-        emissiveIntensity={0.45}
-        roughness={0.82}
-        transparent
-        opacity={0.95}
-        side={
-          THREE.DoubleSide
-        }
-      />
-    </mesh>
+      <mesh
+        geometry={geometry}
+        position={[
+          0,
+          -H / 2 + 0.08,
+          0,
+        ]}
+        rotation={[
+          -Math.PI / 2,
+          0,
+          0,
+        ]}
+      >
+        <meshStandardMaterial
+          color="#0b5f63"
+          emissive="#04383a"
+          emissiveIntensity={0.45}
+          roughness={0.82}
+          transparent
+          opacity={0.95}
+          side={THREE.DoubleSide}
+        />
+      </mesh>
+    </group>
   );
 }
 
 
 /* ============================================================
-   CHLOROPHYLL LAYER
+   CHLOROPHYLL
 ============================================================ */
 
 function ChlorophyllLayer() {
@@ -2280,21 +2833,15 @@ function ChlorophyllLayer() {
         state.vertical
     );
 
-
   const ref =
-    useRef<THREE.Group>(
+    useRef<THREE.Group | null>(
       null
     );
 
 
-  /*
-    IMPORTANT:
-    All hooks are above the
-    conditional return.
-  */
-
   const geometry =
     useMemo(() => {
+
       const positions: number[] =
         [];
 
@@ -2307,11 +2854,6 @@ function ChlorophyllLayer() {
         );
 
 
-      /*
-        Deterministic distribution.
-        No random regeneration.
-      */
-
       for (
         let i = 0;
         i < 2200;
@@ -2323,6 +2865,7 @@ function ChlorophyllLayer() {
         const b =
           i * 0.38196601125;
 
+
         const x =
           -W / 2 +
           (a % 1) * W;
@@ -2330,11 +2873,6 @@ function ChlorophyllLayer() {
         const z =
           -D / 2 +
           (b % 1) * D;
-
-
-        /*
-          Concentrated near surface
-        */
 
         const y =
           H / 2 -
@@ -2352,7 +2890,6 @@ function ChlorophyllLayer() {
           y,
           z
         );
-
 
         colors.push(
           color.r,
@@ -2397,9 +2934,7 @@ function ChlorophyllLayer() {
 
 
   useFrame(({ clock }) => {
-    if (
-      ref.current
-    ) {
+    if (ref.current) {
       ref.current.rotation.y =
         Math.sin(
           clock.elapsedTime *
@@ -2424,7 +2959,6 @@ function ChlorophyllLayer() {
         1,
       ]}
     >
-
       <points geometry={geometry}>
         <pointsMaterial
           vertexColors
@@ -2436,8 +2970,6 @@ function ChlorophyllLayer() {
         />
       </points>
 
-
-      {/* Visible chlorophyll glow */}
 
       <mesh
         position={[
@@ -2466,27 +2998,6 @@ function ChlorophyllLayer() {
           side={THREE.DoubleSide}
         />
       </mesh>
-
-
-      <Html
-        position={[
-          -4.3,
-          H / 2 + 0.25,
-          0,
-        ]}
-        distanceFactor={8}
-      >
-        <div className="scene-label">
-          <span>
-            Chlorophyll
-          </span>
-
-          <b>
-            Surface Concentration
-          </b>
-        </div>
-      </Html>
-
     </group>
   );
 }
@@ -2506,21 +3017,17 @@ function SeaSurfaceHeightLayer() {
     );
 
 
-  const meshRef =
-    useRef<THREE.Mesh>(
-      null
-    );
-
-
   const geometry =
-    useMemo(() => {
-      return new THREE.PlaneGeometry(
-        W,
-        D,
-        72,
-        56
-      );
-    }, []);
+    useMemo(
+      () =>
+        new THREE.PlaneGeometry(
+          W,
+          D,
+          72,
+          56
+        ),
+      []
+    );
 
 
   useEffect(() => {
@@ -2531,6 +3038,7 @@ function SeaSurfaceHeightLayer() {
 
 
   useFrame(({ clock }) => {
+
     if (!enabled) {
       return;
     }
@@ -2556,28 +3064,24 @@ function SeaSurfaceHeightLayer() {
         position.getY(i);
 
 
-      /*
-        Stronger visible SSH anomaly
-      */
-
       const wave =
         Math.sin(
           x * 1.15 +
           time * 0.8
         ) *
-        0.24 +
+          0.24 +
 
         Math.cos(
           z * 1.45 -
           time * 0.6
         ) *
-        0.16 +
+          0.16 +
 
         Math.sin(
           (x + z) * 0.7 +
           time * 0.4
         ) *
-        0.08;
+          0.08;
 
 
       position.setZ(
@@ -2590,7 +3094,6 @@ function SeaSurfaceHeightLayer() {
     position.needsUpdate =
       true;
 
-
     geometry.computeVertexNormals();
   });
 
@@ -2601,63 +3104,37 @@ function SeaSurfaceHeightLayer() {
 
 
   return (
-    <group>
-
-      <mesh
-        ref={meshRef}
-        geometry={geometry}
-        position={[
-          0,
-          H / 2 + 0.16,
-          0,
-        ]}
-        rotation={[
-          -Math.PI / 2,
-          0,
-          0,
-        ]}
-      >
-        <meshStandardMaterial
-          color="#3978ff"
-          emissive="#174ac0"
-          emissiveIntensity={1.35}
-          transparent
-          opacity={0.58}
-          roughness={0.2}
-          metalness={0.5}
-          side={THREE.DoubleSide}
-        />
-      </mesh>
-
-
-      {/* SSH label */}
-
-      <Html
-        position={[
-          3.5,
-          H / 2 + 0.5,
-          -2.2,
-        ]}
-        distanceFactor={8}
-      >
-        <div className="scene-label">
-          <span>
-            Sea Surface Height
-          </span>
-
-          <b>
-            Dynamic SSH
-          </b>
-        </div>
-      </Html>
-
-    </group>
+    <mesh
+      geometry={geometry}
+      position={[
+        0,
+        H / 2 + 0.16,
+        0,
+      ]}
+      rotation={[
+        -Math.PI / 2,
+        0,
+        0,
+      ]}
+    >
+      <meshStandardMaterial
+        color="#3978ff"
+        emissive="#174ac0"
+        emissiveIntensity={1.35}
+        transparent
+        opacity={0.58}
+        roughness={0.2}
+        metalness={0.5}
+        side={THREE.DoubleSide}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 
 
 /* ============================================================
-   MEASUREMENT LAYER
+   MEASUREMENT
 ============================================================ */
 
 function MeasureLayer() {
@@ -2669,6 +3146,7 @@ function MeasureLayer() {
 
 
   if (
+    !Array.isArray(points) ||
     points.length < 2
   ) {
     return null;
@@ -2688,10 +3166,7 @@ function MeasureLayer() {
 
 
       {points.map(
-        (
-          point,
-          index
-        ) => (
+        (point, index) => (
           <mesh
             key={index}
             position={point}
@@ -2756,9 +3231,7 @@ function ClickPlane() {
         0,
         0,
       ]}
-      onClick={(
-        event
-      ) => {
+      onClick={(event) => {
         event.stopPropagation();
 
 
@@ -2774,13 +3247,13 @@ function ClickPlane() {
 
 
         if (
-          measurePoints.length >=
-          2
+          measurePoints.length >= 2
         ) {
           setStore(
             'measurePoints',
             [point]
           );
+
         } else {
           setStore(
             'measurePoints',
@@ -2810,7 +3283,7 @@ function ClickPlane() {
 
 
 /* ============================================================
-   MAIN SCENE
+   MAIN CANVAS
 ============================================================ */
 
 function SceneCanvas() {
@@ -2822,11 +3295,8 @@ function SceneCanvas() {
           8.5,
           11.5,
         ],
-
         fov: 39,
-
         near: 0.1,
-
         far: 100,
       }}
       dpr={[
@@ -2834,19 +3304,12 @@ function SceneCanvas() {
         1.5,
       ]}
       gl={{
-        preserveDrawingBuffer:
-          false,
-
-        antialias:
-          true,
-
+        preserveDrawingBuffer: false,
+        antialias: true,
         powerPreference:
           'high-performance',
       }}
     >
-
-      {/* Background */}
-
       <color
         attach="background"
         args={[
@@ -2865,8 +3328,6 @@ function SceneCanvas() {
       />
 
 
-      {/* Lights */}
-
       <ambientLight
         intensity={0.65}
       />
@@ -2882,6 +3343,17 @@ function SceneCanvas() {
       />
 
 
+      <directionalLight
+        position={[
+          -5,
+          3,
+          -4,
+        ]}
+        intensity={0.55}
+        color="#3caeff"
+      />
+
+
       <pointLight
         position={[
           -4,
@@ -2893,21 +3365,17 @@ function SceneCanvas() {
       />
 
 
-      {/* Load uploaded scientific dataset */}
+      {/* DATA */}
 
       <RealFieldLoader />
 
 
-      {/* =====================================================
-          MAIN OCEAN
-      ===================================================== */}
+      {/* MAIN OCEAN */}
 
       <OceanVolume />
 
 
-      {/* =====================================================
-          OPTIONAL SCIENTIFIC LAYERS
-      ===================================================== */}
+      {/* OPTIONAL LAYERS */}
 
       <Bathymetry />
 
@@ -2924,18 +3392,14 @@ function SceneCanvas() {
       <DepthSlice />
 
 
-      {/* =====================================================
-          MEASUREMENT
-      ===================================================== */}
+      {/* MEASUREMENT */}
 
       <MeasureLayer />
 
       <ClickPlane />
 
 
-      {/* =====================================================
-          CAMERA
-      ===================================================== */}
+      {/* CAMERA */}
 
       <OrbitControls
         enableDamping
@@ -2949,7 +3413,6 @@ function SceneCanvas() {
         zoomSpeed={0.8}
         panSpeed={0.7}
       />
-
     </Canvas>
   );
 }
@@ -2974,15 +3437,12 @@ export default function OceanScene() {
           'radial-gradient(circle at 50% 30%, #08243a 0%, #020812 70%)',
       }}
     >
-
       <SceneErrorBoundary>
         <SceneCanvas />
       </SceneErrorBoundary>
 
 
-      {/* =====================================================
-          GEOGRAPHIC LABELS
-      ===================================================== */}
+      {/* LONGITUDES */}
 
       <div className="geo-longitudes">
         <span>84°E</span>
@@ -2992,12 +3452,16 @@ export default function OceanScene() {
       </div>
 
 
+      {/* LATITUDES */}
+
       <div className="geo-latitudes">
         <span>16°N</span>
         <span>14°N</span>
         <span>12°N</span>
       </div>
 
+
+      {/* DEPTH */}
 
       <div className="geo-depth">
         <span>0 m</span>
@@ -3009,19 +3473,15 @@ export default function OceanScene() {
       </div>
 
 
-      {/* =====================================================
-          CROSS SECTION
-      ===================================================== */}
+      {/* CROSS SECTION */}
 
       <div className="endpoint a">
         A
       </div>
 
-
       <div className="endpoint b">
         B
       </div>
-
 
       <div className="cross">
         <span>
@@ -3034,14 +3494,11 @@ export default function OceanScene() {
       </div>
 
 
-      {/* =====================================================
-          INTERACTION HINT
-      ===================================================== */}
+      {/* INTERACTION HINT */}
 
       <div className="scene-hint">
         Drag to rotate · Scroll to zoom · Right drag to pan
       </div>
-
     </div>
   );
 }
