@@ -410,9 +410,10 @@ function RealFieldLoader() {
 
 
   useEffect(() => {
-    if (
-      !modelDataset?.id
-    ) {
+    const modelDatasetId =
+      modelDataset?.id;
+
+    if (!modelDatasetId) {
       setStore(
         'modelField',
         null
@@ -420,6 +421,9 @@ function RealFieldLoader() {
 
       return;
     }
+
+    const datasetId: string =
+      modelDatasetId;
 
 
     let cancelled =
@@ -439,7 +443,7 @@ function RealFieldLoader() {
         const url =
           `${API}/api/datasets/` +
           `${encodeURIComponent(
-            modelDataset.id
+            datasetId
           )}` +
           `/field?variable=${encodeURIComponent(
             variable
